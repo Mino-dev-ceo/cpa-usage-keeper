@@ -3,8 +3,15 @@ package cpa
 import (
 	"bufio"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -26,7 +33,7 @@ func TestRedisQueueClientPopsBatch(t *testing.T) {
 		fmt.Fprint(conn, "*2\r\n$7\r\n{\"a\":1}\r\n$7\r\n{\"b\":2}\r\n")
 	})
 
-	client := NewRedisQueueClient(server.URL, "", "secret", time.Second, ManagementUsageQueueKey, 2)
+	client := NewRedisQueueClientWithOptions(RedisQueueOptions{BaseURL: server.URL, ManagementKey: "secret", Timeout: time.Second, QueueKey: ManagementUsageQueueKey, BatchSize: 2})
 	messages, err := client.PopUsage(ctxWithTimeout(t))
 	if err != nil {
 		t.Fatalf("PopUsage returned error: %v", err)
@@ -53,7 +60,14 @@ func TestRedisQueueClientFallsBackToHTTPUsageQueueWhenRedisFails(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewRedisQueueClient(server.URL, "127.0.0.1:1", "secret", 10*time.Millisecond, ManagementUsageQueueKey, 2)
+	client := NewRedisQueueClientWithOptions(RedisQueueOptions{
+		BaseURL:       server.URL,
+		RedisAddr:     "127.0.0.1:1",
+		ManagementKey: "secret",
+		Timeout:       10 * time.Millisecond,
+		QueueKey:      ManagementUsageQueueKey,
+		BatchSize:     2,
+	})
 	client.httpClient.httpClient = server.Client()
 	messages, err := client.PopUsage(ctxWithTimeout(t))
 	if err != nil {
@@ -79,7 +93,14 @@ func TestRedisQueueClientPrefersRedisBeforeHTTPFallback(t *testing.T) {
 	}))
 	defer httpServer.Close()
 
-	client := NewRedisQueueClient(httpServer.URL, redisServer.URL, "secret", time.Second, ManagementUsageQueueKey, 2)
+	client := NewRedisQueueClientWithOptions(RedisQueueOptions{
+		BaseURL:       httpServer.URL,
+		RedisAddr:     redisServer.URL,
+		ManagementKey: "secret",
+		Timeout:       time.Second,
+		QueueKey:      ManagementUsageQueueKey,
+		BatchSize:     2,
+	})
 	client.httpClient.httpClient = httpServer.Client()
 	messages, err := client.PopUsage(ctxWithTimeout(t))
 	if err != nil {
@@ -102,7 +123,7 @@ func TestRedisQueueClientTreatsEmptyPopAsSuccess(t *testing.T) {
 		fmt.Fprint(conn, "*0\r\n")
 	})
 
-	client := NewRedisQueueClient(server.URL, "", "secret", time.Second, ManagementUsageQueueKey, 1000)
+	client := NewRedisQueueClientWithOptions(RedisQueueOptions{BaseURL: server.URL, ManagementKey: "secret", Timeout: time.Second, QueueKey: ManagementUsageQueueKey, BatchSize: 1000})
 	messages, err := client.PopUsage(ctxWithTimeout(t))
 	if err != nil {
 		t.Fatalf("PopUsage returned error: %v", err)
@@ -118,7 +139,7 @@ func TestRedisQueueClientClassifiesAuthErrors(t *testing.T) {
 		fmt.Fprint(conn, "-ERR invalid password\r\n")
 	})
 
-	client := NewRedisQueueClient(server.URL, "", "wrong", time.Second, ManagementUsageQueueKey, 1000)
+	client := NewRedisQueueClientWithOptions(RedisQueueOptions{BaseURL: server.URL, ManagementKey: "wrong", Timeout: time.Second, QueueKey: ManagementUsageQueueKey, BatchSize: 1000})
 	_, err := client.PopUsage(ctxWithTimeout(t))
 	if err == nil {
 		t.Fatal("expected auth error")
@@ -128,27 +149,95 @@ func TestRedisQueueClientClassifiesAuthErrors(t *testing.T) {
 	}
 }
 
+func TestRedisQueueClientTLS(t *testing.T) {
+	cases := []struct {
+		name      string
+		configure func(opts *RedisQueueOptions, server redisQueueTestServer)
+		response  string
+		expected  []string
+	}{
+		{
+			name: "auto-detected from https base URL",
+			configure: func(opts *RedisQueueOptions, server redisQueueTestServer) {
+				opts.BaseURL = server.URL
+			},
+			response: "*1\r\n$5\r\nhello\r\n",
+			expected: []string{"hello"},
+		},
+		{
+			name: "explicit TLS option with redis addr",
+			configure: func(opts *RedisQueueOptions, server redisQueueTestServer) {
+				opts.RedisAddr = server.Addr
+				opts.TLS = true
+			},
+			response: "*0\r\n",
+			expected: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := newRedisQueueTLSTestServer(t, func(t *testing.T, conn net.Conn) {
+				reader := bufio.NewReader(conn)
+				readRESPCommand(t, reader)
+				fmt.Fprint(conn, "+OK\r\n")
+				readRESPCommand(t, reader)
+				fmt.Fprint(conn, tc.response)
+			})
+
+			opts := RedisQueueOptions{
+				ManagementKey: "secret",
+				Timeout:       time.Second,
+				QueueKey:      ManagementUsageQueueKey,
+				BatchSize:     1,
+				TLSSkipVerify: true,
+			}
+			tc.configure(&opts, server)
+
+			client := NewRedisQueueClientWithOptions(opts)
+			messages, err := client.PopUsage(ctxWithTimeout(t))
+			if err != nil {
+				t.Fatalf("PopUsage over TLS returned error: %v", err)
+			}
+			if len(messages) != len(tc.expected) {
+				t.Fatalf("expected %d messages, got %#v", len(tc.expected), messages)
+			}
+			for i, want := range tc.expected {
+				if messages[i] != want {
+					t.Fatalf("message[%d] = %q, want %q", i, messages[i], want)
+				}
+			}
+		})
+	}
+}
+
 func TestRedisQueueClientPrefersExplicitQueueAddr(t *testing.T) {
-	if got := redisQueueAddress("https://cpa.example.com", "redis-stream.example.com:6380"); got != "redis-stream.example.com:6380" {
-		t.Fatalf("expected explicit redis queue addr, got %q", got)
+	if got, tls := redisQueueAddress("https://cpa.example.com", "redis-stream.example.com:6380"); got != "redis-stream.example.com:6380" || tls {
+		t.Fatalf("expected explicit redis queue addr without TLS, got %q tls=%v", got, tls)
 	}
-	if got := redisQueueAddress("https://cpa.example.com", "redis://redis-stream.example.com:6380"); got != "redis-stream.example.com:6380" {
-		t.Fatalf("expected redis scheme to be stripped, got %q", got)
+	if got, tls := redisQueueAddress("https://cpa.example.com", "redis://redis-stream.example.com:6380"); got != "redis-stream.example.com:6380" || tls {
+		t.Fatalf("expected redis scheme to be stripped without TLS, got %q tls=%v", got, tls)
 	}
-	if got := redisQueueAddress("https://cpa.example.com", "http://redis-stream.example.com:6380"); got != "redis-stream.example.com:6380" {
-		t.Fatalf("expected http scheme to be stripped, got %q", got)
+	if got, tls := redisQueueAddress("https://cpa.example.com", "rediss://redis-stream.example.com:6380"); got != "redis-stream.example.com:6380" || !tls {
+		t.Fatalf("expected rediss scheme to enable TLS, got %q tls=%v", got, tls)
+	}
+	if got, tls := redisQueueAddress("https://cpa.example.com", "http://redis-stream.example.com:6380"); got != "redis-stream.example.com:6380" || tls {
+		t.Fatalf("expected http scheme to be stripped without TLS, got %q tls=%v", got, tls)
 	}
 }
 
 func TestRedisQueueClientDefaultsToManagementPortFromBaseURLHost(t *testing.T) {
-	if got := redisQueueAddress("https://cpa.example.com", ""); got != "cpa.example.com:"+ManagementRedisDefaultPort {
-		t.Fatalf("expected default management port from https host, got %q", got)
+	if got, tls := redisQueueAddress("https://cpa.example.com", ""); got != "cpa.example.com:"+ManagementRedisDefaultPort || !tls {
+		t.Fatalf("expected default management port with TLS from https host, got %q tls=%v", got, tls)
 	}
-	if got := redisQueueAddress("http://cpa.example.com", ""); got != "cpa.example.com:"+ManagementRedisDefaultPort {
-		t.Fatalf("expected default management port from http host, got %q", got)
+	if got, tls := redisQueueAddress("http://cpa.example.com", ""); got != "cpa.example.com:"+ManagementRedisDefaultPort || tls {
+		t.Fatalf("expected default management port without TLS from http host, got %q tls=%v", got, tls)
 	}
-	if got := redisQueueAddress("http://127.0.0.1:"+ManagementRedisDefaultPort, ""); got != "127.0.0.1:"+ManagementRedisDefaultPort {
-		t.Fatalf("expected explicit port to be preserved, got %q", got)
+	if got, tls := redisQueueAddress("https://127.0.0.1:"+ManagementRedisDefaultPort, ""); got != "127.0.0.1:"+ManagementRedisDefaultPort || !tls {
+		t.Fatalf("expected explicit port with TLS to be preserved, got %q tls=%v", got, tls)
+	}
+	if got, tls := redisQueueAddress("http://127.0.0.1:"+ManagementRedisDefaultPort, ""); got != "127.0.0.1:"+ManagementRedisDefaultPort || tls {
+		t.Fatalf("expected explicit port without TLS to be preserved, got %q tls=%v", got, tls)
 	}
 }
 
@@ -161,7 +250,7 @@ func TestRedisQueueClientReportsMalformedRESP(t *testing.T) {
 		fmt.Fprint(conn, "!not-resp\r\n")
 	})
 
-	client := NewRedisQueueClient(server.URL, "", "secret", time.Second, ManagementUsageQueueKey, 1000)
+	client := NewRedisQueueClientWithOptions(RedisQueueOptions{BaseURL: server.URL, ManagementKey: "secret", Timeout: time.Second, QueueKey: ManagementUsageQueueKey, BatchSize: 1000})
 	_, err := client.PopUsage(ctxWithTimeout(t))
 	if err == nil || !strings.Contains(err.Error(), "read redis queue pop response") {
 		t.Fatalf("expected malformed response error, got %v", err)
@@ -169,12 +258,28 @@ func TestRedisQueueClientReportsMalformedRESP(t *testing.T) {
 }
 
 type redisQueueTestServer struct {
-	URL string
+	URL  string
+	Addr string
 }
 
 func newRedisQueueTestServer(t *testing.T, handler func(*testing.T, net.Conn)) redisQueueTestServer {
+	return startRedisQueueTestServer(t, false, handler)
+}
+
+func newRedisQueueTLSTestServer(t *testing.T, handler func(*testing.T, net.Conn)) redisQueueTestServer {
+	return startRedisQueueTestServer(t, true, handler)
+}
+
+func startRedisQueueTestServer(t *testing.T, useTLS bool, handler func(*testing.T, net.Conn)) redisQueueTestServer {
 	t.Helper()
-	listener, err := net.Listen(cpaManagementRedisNetwork, "127.0.0.1:0")
+	var listener net.Listener
+	var err error
+	if useTLS {
+		cert := generateSelfSignedCert(t)
+		listener, err = tls.Listen(cpaManagementRedisNetwork, "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{cert}})
+	} else {
+		listener, err = net.Listen(cpaManagementRedisNetwork, "127.0.0.1:0")
+	}
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -192,7 +297,35 @@ func newRedisQueueTestServer(t *testing.T, handler func(*testing.T, net.Conn)) r
 	}()
 	t.Cleanup(func() { <-done })
 
-	return redisQueueTestServer{URL: "http://" + listener.Addr().String()}
+	scheme := "http"
+	if useTLS {
+		scheme = "https"
+	}
+	addr := listener.Addr().String()
+	return redisQueueTestServer{URL: scheme + "://" + addr, Addr: addr}
+}
+
+func generateSelfSignedCert(t *testing.T) tls.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	return tls.Certificate{
+		Certificate: [][]byte{certDER},
+		PrivateKey:  key,
+	}
 }
 
 func readRESPCommand(t *testing.T, reader *bufio.Reader) []string {

@@ -65,9 +65,18 @@ type RedisInboxPullResult struct {
 
 func NewSyncService(db *gorm.DB, cfg config.Config) *SyncService {
 	return NewSyncServiceWithOptions(db, SyncServiceOptions{
-		BaseURL:       cfg.CPABaseURL,
-		Client:        cpa.NewClient(cfg.CPABaseURL, cfg.CPAManagementKey, cfg.RequestTimeout),
-		RedisQueue:    cpa.NewRedisQueueClient(cfg.CPABaseURL, cfg.RedisQueueAddr, cfg.CPAManagementKey, cfg.RequestTimeout, cfg.RedisQueueKey, cfg.RedisQueueBatchSize),
+		BaseURL: cfg.CPABaseURL,
+		Client:  cpa.NewClient(cfg.CPABaseURL, cfg.CPAManagementKey, cfg.RequestTimeout, cfg.TLSSkipVerify),
+		RedisQueue: cpa.NewRedisQueueClientWithOptions(cpa.RedisQueueOptions{
+			BaseURL:       cfg.CPABaseURL,
+			RedisAddr:     cfg.RedisQueueAddr,
+			ManagementKey: cfg.CPAManagementKey,
+			Timeout:       cfg.RequestTimeout,
+			QueueKey:      cfg.RedisQueueKey,
+			BatchSize:     cfg.RedisQueueBatchSize,
+			TLS:           cfg.RedisQueueTLS,
+			TLSSkipVerify: cfg.TLSSkipVerify,
+		}),
 		RedisQueueKey: cfg.RedisQueueKey,
 	})
 }

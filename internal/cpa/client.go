@@ -2,6 +2,7 @@ package cpa
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -66,13 +67,19 @@ func (c *Client) doManagementJSONRequest(ctx context.Context, path string, targe
 	})
 }
 
-func NewClient(baseURL, managementKey string, timeout time.Duration) *Client {
+func NewClient(baseURL, managementKey string, timeout time.Duration, tlsSkipVerify bool) *Client {
+	httpClient := &http.Client{
+		Timeout: timeout,
+	}
+	if tlsSkipVerify {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		httpClient.Transport = transport
+	}
 	return &Client{
 		baseURL:       strings.TrimRight(strings.TrimSpace(baseURL), "/"),
 		managementKey: strings.TrimSpace(managementKey),
-		httpClient: &http.Client{
-			Timeout: timeout,
-		},
+		httpClient:    httpClient,
 	}
 }
 
