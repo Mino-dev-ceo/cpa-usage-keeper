@@ -22,6 +22,7 @@ const (
 	migrationBackfillUsageIdentityStats       = "20260504_backfill_usage_identity_stats"
 	migrationDropLegacyMetadataTables         = "20260504_drop_legacy_metadata_tables"
 	migrationRemovePrefixUsageIdentities      = "20260504_remove_prefix_usage_identities"
+	migrationAddUsageIdentityLookupKey        = "20260505_add_usage_identity_lookup_key"
 )
 
 type schemaMigration struct {
@@ -54,6 +55,7 @@ func runSchemaMigrations(db *gorm.DB) error {
 		{version: migrationBackfillUsageIdentityStats, run: backfillUsageIdentityStatsMigration},
 		{version: migrationDropLegacyMetadataTables, run: dropLegacyMetadataTablesMigration},
 		{version: migrationRemovePrefixUsageIdentities, run: removePrefixUsageIdentitiesMigration},
+		{version: migrationAddUsageIdentityLookupKey, run: addUsageIdentityLookupKeyMigration},
 	}
 	for _, migration := range migrations {
 		if err := runSchemaMigration(db, migration); err != nil {
@@ -249,6 +251,7 @@ func createUsageIdentitiesMigration(tx *gorm.DB) error {
 			identity text,
 			type text,
 			provider text,
+			lookup_key text,
 			total_requests integer DEFAULT 0,
 			success_count integer DEFAULT 0,
 			failure_count integer DEFAULT 0,
@@ -278,6 +281,19 @@ func createUsageIdentitiesMigration(tx *gorm.DB) error {
 		if err := tx.Exec(statement).Error; err != nil {
 			return fmt.Errorf("create usage_identities schema: %w", err)
 		}
+	}
+	return nil
+}
+
+func addUsageIdentityLookupKeyMigration(tx *gorm.DB) error {
+	if !tx.Migrator().HasTable(&models.UsageIdentity{}) {
+		return nil
+	}
+	if tx.Migrator().HasColumn(&models.UsageIdentity{}, "lookup_key") {
+		return nil
+	}
+	if err := tx.Exec("ALTER TABLE usage_identities ADD COLUMN lookup_key TEXT").Error; err != nil {
+		return fmt.Errorf("add usage_identities.lookup_key column: %w", err)
 	}
 	return nil
 }

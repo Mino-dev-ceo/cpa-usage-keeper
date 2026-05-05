@@ -26,6 +26,9 @@ func TestOpenDatabaseRunsSchemaMigrationsAndAddsUsageEventRedisFields(t *testing
 			t.Fatalf("expected usage_events.%s column to exist", column)
 		}
 	}
+	if !db.Migrator().HasColumn(&models.UsageIdentity{}, "lookup_key") {
+		t.Fatal("expected usage_identities.lookup_key column to exist")
+	}
 
 	var versions []string
 	if err := db.Table("schema_migrations").Order("version asc").Pluck("version", &versions).Error; err != nil {
@@ -42,6 +45,7 @@ func TestOpenDatabaseRunsSchemaMigrationsAndAddsUsageEventRedisFields(t *testing
 		"20260504_drop_legacy_snapshot_run_columns",
 		"20260504_migrate_usage_identities_metadata",
 		"20260504_remove_prefix_usage_identities",
+		"20260505_add_usage_identity_lookup_key",
 	}
 	if len(versions) != len(expected) {
 		t.Fatalf("expected migration versions %v, got %v", expected, versions)
@@ -50,6 +54,56 @@ func TestOpenDatabaseRunsSchemaMigrationsAndAddsUsageEventRedisFields(t *testing
 		if versions[i] != expected[i] {
 			t.Fatalf("expected migration versions %v, got %v", expected, versions)
 		}
+	}
+}
+
+func TestOpenDatabaseAddsUsageIdentityLookupKeyToExistingTable(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath)), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open legacy database: %v", err)
+	}
+	if err := db.Exec(`CREATE TABLE usage_identities (
+		id integer PRIMARY KEY AUTOINCREMENT,
+		name text,
+		auth_type integer,
+		auth_type_name text,
+		identity text,
+		type text,
+		provider text,
+		total_requests integer DEFAULT 0,
+		success_count integer DEFAULT 0,
+		failure_count integer DEFAULT 0,
+		input_tokens integer DEFAULT 0,
+		output_tokens integer DEFAULT 0,
+		reasoning_tokens integer DEFAULT 0,
+		cached_tokens integer DEFAULT 0,
+		total_tokens integer DEFAULT 0,
+		last_aggregated_usage_event_id integer DEFAULT 0,
+		first_used_at datetime,
+		last_used_at datetime,
+		stats_updated_at datetime,
+		is_deleted numeric DEFAULT false,
+		created_at datetime,
+		updated_at datetime,
+		deleted_at datetime
+	)`).Error; err != nil {
+		t.Fatalf("create legacy usage_identities table: %v", err)
+	}
+	closeOpenedDatabase(t, db)
+
+	db = openMigratedDatabase(t, dbPath)
+	defer closeOpenedDatabase(t, db)
+
+	if !db.Migrator().HasColumn(&models.UsageIdentity{}, "lookup_key") {
+		t.Fatal("expected usage_identities.lookup_key column to be added")
+	}
+	var count int64
+	if err := db.Table("schema_migrations").Where("version = ?", "20260505_add_usage_identity_lookup_key").Count(&count).Error; err != nil {
+		t.Fatalf("count lookup_key migration: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected lookup_key migration to be recorded once, got %d", count)
 	}
 }
 
@@ -73,8 +127,8 @@ func TestOpenDatabaseMigrationsAreIdempotent(t *testing.T) {
 	if err := db.Table("schema_migrations").Count(&count).Error; err != nil {
 		t.Fatalf("count schema migrations: %v", err)
 	}
-	if count != 10 {
-		t.Fatalf("expected 10 applied migrations after reopening database, got %d", count)
+	if count != 11 {
+		t.Fatalf("expected 11 applied migrations after reopening database, got %d", count)
 	}
 }
 

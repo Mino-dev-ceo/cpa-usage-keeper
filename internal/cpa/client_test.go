@@ -216,7 +216,7 @@ func TestProviderMetadataFetchersUseDedicatedEndpoints(t *testing.T) {
 			fetch: func(ctx context.Context, client *Client) (*ProviderKeyConfigResult, error) {
 				return client.FetchGeminiAPIKeys(ctx)
 			},
-			response: `[{"apiKey":"gemini-key","prefix":"gemini-prefix","name":"Gemini"}]`,
+			response: `[{"apiKey":"gemini-key","prefix":"gemini-prefix","name":"Gemini","auth-index":"gemini-auth-index"}]`,
 		},
 		{
 			name: "claude",
@@ -224,7 +224,7 @@ func TestProviderMetadataFetchersUseDedicatedEndpoints(t *testing.T) {
 			fetch: func(ctx context.Context, client *Client) (*ProviderKeyConfigResult, error) {
 				return client.FetchClaudeAPIKeys(ctx)
 			},
-			response: `[{"api-key":"claude-key","prefix":"claude-prefix","name":"Claude"}]`,
+			response: `[{"api-key":"claude-key","prefix":"claude-prefix","name":"Claude","auth_index":"claude-auth-index"}]`,
 		},
 		{
 			name: "codex",
@@ -232,7 +232,7 @@ func TestProviderMetadataFetchersUseDedicatedEndpoints(t *testing.T) {
 			fetch: func(ctx context.Context, client *Client) (*ProviderKeyConfigResult, error) {
 				return client.FetchCodexAPIKeys(ctx)
 			},
-			response: `[{"key":"codex-key","prefix":"codex-prefix","name":"Codex"}]`,
+			response: `[{"key":"codex-key","prefix":"codex-prefix","name":"Codex","authIndex":"codex-auth-index"}]`,
 		},
 		{
 			name: "vertex",
@@ -240,7 +240,7 @@ func TestProviderMetadataFetchersUseDedicatedEndpoints(t *testing.T) {
 			fetch: func(ctx context.Context, client *Client) (*ProviderKeyConfigResult, error) {
 				return client.FetchVertexAPIKeys(ctx)
 			},
-			response: `[{"apiKey":"vertex-key","prefix":"vertex-prefix","name":"Vertex"}]`,
+			response: `[{"apiKey":"vertex-key","prefix":"vertex-prefix","name":"Vertex","auth-index":"vertex-auth-index"}]`,
 		},
 	}
 
@@ -265,7 +265,7 @@ func TestProviderMetadataFetchersUseDedicatedEndpoints(t *testing.T) {
 			if result.StatusCode != http.StatusOK || len(result.Body) == 0 {
 				t.Fatalf("unexpected result metadata: %+v", result)
 			}
-			if len(result.Payload) != 1 || result.Payload[0].APIKey == "" || result.Payload[0].Prefix == "" || result.Payload[0].Name == "" {
+			if len(result.Payload) != 1 || result.Payload[0].APIKey == "" || result.Payload[0].Prefix == "" || result.Payload[0].Name == "" || result.Payload[0].AuthIndex == "" {
 				t.Fatalf("unexpected provider payload: %#v", result.Payload)
 			}
 		})
@@ -285,7 +285,7 @@ func TestProviderMetadataFetchersParseWrappedEndpointResponses(t *testing.T) {
 			fetch: func(ctx context.Context, client *Client) (*ProviderKeyConfigResult, error) {
 				return client.FetchGeminiAPIKeys(ctx)
 			},
-			response: `{"gemini-api-key":[{"apiKey":"gemini-key","prefix":"gemini-prefix","name":"Gemini"}]}`,
+			response: `{"gemini-api-key":[{"apiKey":"gemini-key","prefix":"gemini-prefix","name":"Gemini","auth-index":"gemini-auth-index"}]}`,
 		},
 		{
 			name: "claude",
@@ -293,7 +293,7 @@ func TestProviderMetadataFetchersParseWrappedEndpointResponses(t *testing.T) {
 			fetch: func(ctx context.Context, client *Client) (*ProviderKeyConfigResult, error) {
 				return client.FetchClaudeAPIKeys(ctx)
 			},
-			response: `{"claude-api-key":[{"api-key":"claude-key","prefix":"claude-prefix","name":"Claude"}]}`,
+			response: `{"claude-api-key":[{"api-key":"claude-key","prefix":"claude-prefix","name":"Claude","auth_index":"claude-auth-index"}]}`,
 		},
 		{
 			name: "codex",
@@ -301,7 +301,7 @@ func TestProviderMetadataFetchersParseWrappedEndpointResponses(t *testing.T) {
 			fetch: func(ctx context.Context, client *Client) (*ProviderKeyConfigResult, error) {
 				return client.FetchCodexAPIKeys(ctx)
 			},
-			response: `{"codex-api-key":[{"key":"codex-key","prefix":"codex-prefix","name":"Codex"}]}`,
+			response: `{"codex-api-key":[{"key":"codex-key","prefix":"codex-prefix","name":"Codex","authIndex":"codex-auth-index"}]}`,
 		},
 		{
 			name: "vertex",
@@ -309,7 +309,7 @@ func TestProviderMetadataFetchersParseWrappedEndpointResponses(t *testing.T) {
 			fetch: func(ctx context.Context, client *Client) (*ProviderKeyConfigResult, error) {
 				return client.FetchVertexAPIKeys(ctx)
 			},
-			response: `{"vertex-api-key":[{"apiKey":"vertex-key","prefix":"vertex-prefix","name":"Vertex"}]}`,
+			response: `{"vertex-api-key":[{"apiKey":"vertex-key","prefix":"vertex-prefix","name":"Vertex","auth-index":"vertex-auth-index"}]}`,
 		},
 	}
 
@@ -328,7 +328,7 @@ func TestProviderMetadataFetchersParseWrappedEndpointResponses(t *testing.T) {
 			if err != nil {
 				t.Fatalf("fetch returned error: %v", err)
 			}
-			if len(result.Payload) != 1 || result.Payload[0].APIKey == "" || result.Payload[0].Prefix == "" || result.Payload[0].Name == "" {
+			if len(result.Payload) != 1 || result.Payload[0].APIKey == "" || result.Payload[0].Prefix == "" || result.Payload[0].Name == "" || result.Payload[0].AuthIndex == "" {
 				t.Fatalf("unexpected wrapped provider payload: %#v", result.Payload)
 			}
 		})
@@ -340,7 +340,7 @@ func TestFetchOpenAICompatibilityParsesWrappedEndpointResponse(t *testing.T) {
 		if r.URL.Path != cpaManagementOpenAICompatibilityEndpoint {
 			t.Fatalf("unexpected path %q", r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{"openai-compatibility":[{"id":"custom-openai","prefix":"custom","api-keys":["custom-key"]}]}`))
+		_, _ = w.Write([]byte(`{"openai-compatibility":[{"id":"custom-openai","prefix":"custom","api-key-entries":[{"api-key":"custom-key","auth-index":"custom-auth-index"}]}]}`))
 	}))
 	defer server.Close()
 
@@ -349,7 +349,7 @@ func TestFetchOpenAICompatibilityParsesWrappedEndpointResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchOpenAICompatibility returned error: %v", err)
 	}
-	if len(result.Payload) != 1 || result.Payload[0].Name != "custom-openai" || result.Payload[0].Prefix != "custom" || len(result.Payload[0].APIKeyEntries) != 1 || result.Payload[0].APIKeyEntries[0].APIKey != "custom-key" {
+	if len(result.Payload) != 1 || result.Payload[0].Name != "custom-openai" || result.Payload[0].Prefix != "custom" || len(result.Payload[0].APIKeyEntries) != 1 || result.Payload[0].APIKeyEntries[0].APIKey != "custom-key" || result.Payload[0].APIKeyEntries[0].AuthIndex != "custom-auth-index" {
 		t.Fatalf("unexpected wrapped openai compatibility payload: %#v", result.Payload)
 	}
 }

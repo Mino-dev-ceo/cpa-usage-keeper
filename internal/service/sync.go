@@ -10,6 +10,7 @@ import (
 	"cpa-usage-keeper/internal/cpa"
 	"cpa-usage-keeper/internal/models"
 	"cpa-usage-keeper/internal/repository"
+
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
@@ -608,6 +609,7 @@ type providerMetadataInput struct {
 	LookupKey    string
 	ProviderType string
 	DisplayName  string
+	AuthIndex    string
 }
 
 func providerMetadataUsageIdentities(inputs []providerMetadataInput) []models.UsageIdentity {
@@ -617,9 +619,10 @@ func providerMetadataUsageIdentities(inputs []providerMetadataInput) []models.Us
 			Name:         input.DisplayName,
 			AuthType:     models.UsageIdentityAuthTypeAIProvider,
 			AuthTypeName: "apikey",
-			Identity:     input.LookupKey,
+			Identity:     input.AuthIndex,
 			Type:         input.ProviderType,
 			Provider:     input.DisplayName,
+			LookupKey:    input.LookupKey,
 		})
 	}
 	return identities
@@ -628,27 +631,29 @@ func providerMetadataUsageIdentities(inputs []providerMetadataInput) []models.Us
 func flattenProviderMetadata(cfg cpa.ProviderMetadataConfig) []providerMetadataInput {
 	items := make([]providerMetadataInput, 0)
 	seen := make(map[string]struct{})
-	appendItem := func(lookupKey, providerType, displayName string) {
+	appendItem := func(lookupKey, providerType, displayName, authIndex string) {
 		lookupKey = strings.TrimSpace(lookupKey)
 		providerType = strings.TrimSpace(providerType)
 		displayName = strings.TrimSpace(displayName)
-		if lookupKey == "" || providerType == "" || displayName == "" {
+		authIndex = strings.TrimSpace(authIndex)
+		if lookupKey == "" || providerType == "" || displayName == "" || authIndex == "" {
 			return
 		}
-		if _, ok := seen[lookupKey]; ok {
+		if _, ok := seen[authIndex]; ok {
 			return
 		}
-		seen[lookupKey] = struct{}{}
+		seen[authIndex] = struct{}{}
 		items = append(items, providerMetadataInput{
 			LookupKey:    lookupKey,
 			ProviderType: providerType,
 			DisplayName:  displayName,
+			AuthIndex:    authIndex,
 		})
 	}
 	appendProviderEntries := func(providerType string, configs []cpa.ProviderKeyConfig) {
 		for _, cfg := range configs {
 			displayName := firstNonEmpty(cfg.Name, providerType)
-			appendItem(cfg.APIKey, providerType, displayName)
+			appendItem(cfg.APIKey, providerType, displayName, cfg.AuthIndex)
 		}
 	}
 
@@ -660,7 +665,7 @@ func flattenProviderMetadata(cfg cpa.ProviderMetadataConfig) []providerMetadataI
 	for _, provider := range cfg.OpenAICompatibility {
 		displayName := firstNonEmpty(provider.Name, "openai")
 		for _, entry := range provider.APIKeyEntries {
-			appendItem(entry.APIKey, "openai", displayName)
+			appendItem(entry.APIKey, "openai", displayName, entry.AuthIndex)
 		}
 	}
 
