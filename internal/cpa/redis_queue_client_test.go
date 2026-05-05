@@ -2,6 +2,7 @@ package cpa
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -16,11 +17,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 func TestRedisQueueClientPopsBatch(t *testing.T) {
+	logs := captureRedisQueueClientInfoLogs(t)
 	server := newRedisQueueTestServer(t, func(t *testing.T, conn net.Conn) {
 		reader := bufio.NewReader(conn)
 		if got := readRESPCommand(t, reader); strings.Join(got, " ") != cpaManagementRedisAuthCommand+" secret" {
@@ -42,9 +47,13 @@ func TestRedisQueueClientPopsBatch(t *testing.T) {
 	if len(messages) != 2 || messages[0] != `{"a":1}` || messages[1] != `{"b":2}` {
 		t.Fatalf("unexpected messages: %#v", messages)
 	}
+	if !strings.Contains(logs.String(), `msg="usage queue sync used redis protocol"`) {
+		t.Fatalf("expected redis protocol log, got %q", logs.String())
+	}
 }
 
 func TestRedisQueueClientFallsBackToHTTPUsageQueueWhenRedisFails(t *testing.T) {
+	logs := captureRedisQueueClientInfoLogs(t)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != cpaManagementUsageQueueEndpoint {
 			t.Fatalf("unexpected path %q", r.URL.Path)
@@ -75,6 +84,81 @@ func TestRedisQueueClientFallsBackToHTTPUsageQueueWhenRedisFails(t *testing.T) {
 	}
 	if len(messages) != 2 || messages[0] != `{"a":1}` || messages[1] != `{"b":2}` {
 		t.Fatalf("unexpected messages: %#v", messages)
+	}
+	content := logs.String()
+	if !strings.Contains(content, `msg="usage queue sync used http protocol"`) {
+		t.Fatalf("expected http fallback log, got %q", content)
+	}
+	if !strings.Contains(content, "redis_error=") {
+		t.Fatalf("expected redis error field in fallback log, got %q", content)
+	}
+}
+
+func TestRedisQueueClientCachesHTTPFallbackModeAfterFirstSuccessfulFallback(t *testing.T) {
+	logs := captureRedisQueueClientInfoLogs(t)
+	var httpCalls atomic.Int32
+	httpServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpCalls.Add(1)
+		_, _ = w.Write([]byte(`[{"h":1}]`))
+	}))
+	defer httpServer.Close()
+
+	client := NewRedisQueueClientWithOptions(RedisQueueOptions{
+		BaseURL:       httpServer.URL,
+		RedisAddr:     "127.0.0.1:1",
+		ManagementKey: "secret",
+		Timeout:       10 * time.Millisecond,
+		QueueKey:      ManagementUsageQueueKey,
+		BatchSize:     1,
+	})
+	client.httpClient.httpClient = httpServer.Client()
+
+	for range 2 {
+		messages, err := client.PopUsage(ctxWithTimeout(t))
+		if err != nil {
+			t.Fatalf("PopUsage returned error: %v", err)
+		}
+		if len(messages) != 1 || messages[0] != `{"h":1}` {
+			t.Fatalf("unexpected messages: %#v", messages)
+		}
+	}
+
+	if httpCalls.Load() != 2 {
+		t.Fatalf("expected cached http mode to make two http calls, got %d", httpCalls.Load())
+	}
+	if count := strings.Count(logs.String(), `msg="usage queue sync used http protocol"`); count != 1 {
+		t.Fatalf("expected fallback mode to be logged once, got %d logs: %q", count, logs.String())
+	}
+}
+
+func TestRedisQueueClientCachesRedisModeAfterFirstSuccessfulPop(t *testing.T) {
+	logs := captureRedisQueueClientInfoLogs(t)
+	var redisCalls atomic.Int32
+	redisServer := newRedisQueueMultiTestServer(t, 2, func(t *testing.T, conn net.Conn) {
+		redisCalls.Add(1)
+		reader := bufio.NewReader(conn)
+		readRESPCommand(t, reader)
+		fmt.Fprint(conn, "+OK\r\n")
+		readRESPCommand(t, reader)
+		fmt.Fprint(conn, "*1\r\n$7\r\n{\"r\":1}\r\n")
+	})
+
+	client := NewRedisQueueClientWithOptions(RedisQueueOptions{BaseURL: redisServer.URL, ManagementKey: "secret", Timeout: time.Second, QueueKey: ManagementUsageQueueKey, BatchSize: 1})
+	for range 2 {
+		messages, err := client.PopUsage(ctxWithTimeout(t))
+		if err != nil {
+			t.Fatalf("PopUsage returned error: %v", err)
+		}
+		if len(messages) != 1 || messages[0] != `{"r":1}` {
+			t.Fatalf("unexpected messages: %#v", messages)
+		}
+	}
+
+	if redisCalls.Load() != 2 {
+		t.Fatalf("expected cached redis mode to make two redis calls, got %d", redisCalls.Load())
+	}
+	if count := strings.Count(logs.String(), `msg="usage queue sync used redis protocol"`); count != 1 {
+		t.Fatalf("expected redis mode to be logged once, got %d logs: %q", count, logs.String())
 	}
 }
 
@@ -272,6 +356,16 @@ func newRedisQueueTLSTestServer(t *testing.T, handler func(*testing.T, net.Conn)
 
 func startRedisQueueTestServer(t *testing.T, useTLS bool, handler func(*testing.T, net.Conn)) redisQueueTestServer {
 	t.Helper()
+	return startRedisQueueMultiTestServer(t, 1, useTLS, handler)
+}
+
+func newRedisQueueMultiTestServer(t *testing.T, connections int, handler func(*testing.T, net.Conn)) redisQueueTestServer {
+	t.Helper()
+	return startRedisQueueMultiTestServer(t, connections, false, handler)
+}
+
+func startRedisQueueMultiTestServer(t *testing.T, connections int, useTLS bool, handler func(*testing.T, net.Conn)) redisQueueTestServer {
+	t.Helper()
 	var listener net.Listener
 	var err error
 	if useTLS {
@@ -288,12 +382,14 @@ func startRedisQueueTestServer(t *testing.T, useTLS bool, handler func(*testing.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		conn, err := listener.Accept()
-		if err != nil {
-			return
+		for range connections {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			handler(t, conn)
+			conn.Close()
 		}
-		defer conn.Close()
-		handler(t, conn)
 	}()
 	t.Cleanup(func() { <-done })
 
@@ -355,6 +451,23 @@ func readRESPCommand(t *testing.T, reader *bufio.Reader) []string {
 		parts = append(parts, string(buf[:size]))
 	}
 	return parts
+}
+
+func captureRedisQueueClientInfoLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var logs bytes.Buffer
+	previousOutput := logrus.StandardLogger().Out
+	previousFormatter := logrus.StandardLogger().Formatter
+	previousLevel := logrus.GetLevel()
+	logrus.SetOutput(&logs)
+	logrus.SetFormatter(&logrus.TextFormatter{DisableTimestamp: true})
+	logrus.SetLevel(logrus.InfoLevel)
+	t.Cleanup(func() {
+		logrus.SetOutput(previousOutput)
+		logrus.SetFormatter(previousFormatter)
+		logrus.SetLevel(previousLevel)
+	})
+	return &logs
 }
 
 func ctxWithTimeout(t *testing.T) context.Context {

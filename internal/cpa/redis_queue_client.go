@@ -11,10 +11,20 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 var ErrRedisQueueAuth = errors.New("redis queue auth failed")
+
+type redisQueueSyncMode string
+
+const (
+	redisQueueSyncModeRedis redisQueueSyncMode = "redis"
+	redisQueueSyncModeHTTP  redisQueueSyncMode = "http"
+)
 
 type RedisQueueClient struct {
 	address       string
@@ -23,6 +33,8 @@ type RedisQueueClient struct {
 	queueKey      string
 	batchSize     int
 	httpClient    *Client
+	mu            sync.Mutex
+	syncMode      redisQueueSyncMode
 	dial          func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
@@ -80,18 +92,33 @@ func (c *RedisQueueClient) PopUsage(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("redis queue batch size must be positive")
 	}
 
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	switch c.syncMode {
+	case redisQueueSyncModeRedis:
+		return c.popUsageOverRedis(ctx)
+	case redisQueueSyncModeHTTP:
+		return c.popUsageOverHTTP(ctx)
+	}
+
 	messages, err := c.popUsageOverRedis(ctx)
 	if err == nil {
+		c.syncMode = redisQueueSyncModeRedis
+		logrus.WithField("message_count", len(messages)).Info("usage queue sync used redis protocol")
 		return messages, nil
 	}
+	logrus.WithField("redis_error", err.Error()).Error("usage queue sync failed to used redis protocol")
 	if !c.canFallbackToHTTP() {
-		return nil, err
+		return nil, fmt.Errorf("usage queue sync failed: %w; http usage queue fallback not possible", err)
 	}
 
 	messages, fallbackErr := c.popUsageOverHTTP(ctx)
 	if fallbackErr != nil {
-		return nil, fmt.Errorf("redis queue pop failed: %w; http usage queue fallback failed: %w", err, fallbackErr)
+		return nil, fmt.Errorf("usage queue sync failed: %w; http usage queue fallback failed: %w", err, fallbackErr)
 	}
+	c.syncMode = redisQueueSyncModeHTTP
+	logrus.WithField("message_count", len(messages)).Info("usage queue sync used http protocol")
 	return messages, nil
 }
 
