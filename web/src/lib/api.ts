@@ -1,4 +1,4 @@
-import type { AuthSessionResponse, PricingEntry, PricingResponse, StatusResponse, UsageAnalysisResponse, UsageEventFilterOptionsResponse, UsedModelsResponse, UsageIdentitiesResponse, UsageEventsResponse, UsageOverviewResponse } from './types'
+import type { AuthSessionResponse, PricingEntry, PricingResponse, StatusResponse, UpdateCheckResponse, UsageAnalysisResponse, UsageEventFilterOptionsResponse, UsedModelsResponse, UsageIdentitiesResponse, UsageEventsResponse, UsageOverviewResponse } from './types'
 
 export class ApiError extends Error {
   status: number
@@ -176,6 +176,14 @@ export async function fetchStatus(signal?: AbortSignal): Promise<StatusResponse>
   const response = await apiFetch(apiPath('/status'), { signal })
   if (!response.ok) {
     await parseApiError(response, `Failed to load status: ${response.status}`)
+  }
+  return response.json()
+}
+
+export async function fetchUpdateCheck(signal?: AbortSignal): Promise<UpdateCheckResponse> {
+  const response = await apiFetch(apiPath('/update/check'), { signal })
+  if (!response.ok) {
+    await parseApiError(response, `Failed to check for updates: ${response.status}`)
   }
   return response.json()
 }

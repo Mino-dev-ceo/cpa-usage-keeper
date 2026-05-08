@@ -6,10 +6,20 @@ export interface StatusResponse {
   running: boolean
   sync_running: boolean
   timezone: string
+  version?: string
+  updateCheckEnabled?: boolean
   last_run_at?: string
   last_error?: string
   last_warning?: string
   last_status?: string
+}
+
+export interface UpdateCheckResponse {
+  currentVersion: string
+  latestVersion: string
+  updateAvailable: boolean
+  canCompare: boolean
+  message: string
 }
 
 export interface UsageTokenStats {

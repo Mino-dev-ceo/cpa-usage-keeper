@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchUsageEventFilterOptions, fetchUsageEvents, fetchUsageIdentities, triggerSync } from './api';
+import { fetchUpdateCheck, fetchUsageEventFilterOptions, fetchUsageEvents, fetchUsageIdentities, triggerSync } from './api';
 
 describe('fetchUsageEvents', () => {
   afterEach(() => {
@@ -127,5 +127,30 @@ describe('fetchUsageEvents', () => {
     expect(response.last_status).toBe('completed');
     expect(parsed.pathname).toBe('/api/v1/sync');
     expect(init).toMatchObject({ credentials: 'include', method: 'POST', signal });
+  });
+
+  it('loads update check status from the protected endpoint', async () => {
+    vi.stubGlobal('window', { __APP_BASE_PATH__: undefined });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        currentVersion: 'v1.2.3',
+        latestVersion: 'v1.2.4',
+        updateAvailable: true,
+        canCompare: true,
+        message: 'new version available: v1.2.4',
+      }),
+    } as Response);
+    const signal = new AbortController().signal;
+
+    const response = await fetchUpdateCheck(signal);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    const parsed = new URL(String(url), 'http://localhost');
+
+    expect(response.latestVersion).toBe('v1.2.4');
+    expect(response.updateAvailable).toBe(true);
+    expect(parsed.pathname).toBe('/api/v1/update/check');
+    expect(init).toMatchObject({ credentials: 'include', signal });
   });
 });
