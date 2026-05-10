@@ -1,9 +1,12 @@
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { IconRefreshCw } from '@/components/ui/icons'
 import styles from './CredentialSections.module.scss'
 import type { AuthFileCredentialRow, DisplayQuota, PlanTypeTone } from './credentialViewModels'
 import { CredentialBadge, CredentialRowShell, CredentialSectionShell, CredentialsPagination, MetricPill, RequestMetric, TonePercent, cacheRateTone, capitalize, credentialToneClassName, formatCredentialNumber, successRateTone } from './CredentialSectionShell'
+
+type QuotaRotationPhase = 'percent' | 'reset'
 
 interface AuthFileCredentialsSectionProps {
   rows: AuthFileCredentialRow[]
@@ -20,6 +23,7 @@ interface AuthFileCredentialsSectionProps {
 
 export function AuthFileCredentialsSection({ rows, total, page, totalPages, loading, quotaRefreshing, quotaRefreshError, onPageChange, onRefreshQuota, onRefreshQuotaForAuthIndex }: AuthFileCredentialsSectionProps) {
   const { t } = useTranslation()
+  const quotaRotationPhase = useQuotaRotationPhase()
   const canRefresh = rows.some((row) => !isRowRefreshing(row) && !row.identity.is_deleted) && !quotaRefreshing
 
   return (
@@ -73,7 +77,7 @@ export function AuthFileCredentialsSection({ rows, total, page, totalPages, load
             )}
             side={(
               <div className={styles.credentialQuotaSideWithAction}>
-                <AuthFileQuotaPanel row={row} />
+                <AuthFileQuotaPanel row={row} rotationPhase={quotaRotationPhase} />
                 <button
                   type="button"
                   className={`${styles.credentialRowRefreshButton} ${rowRefreshing ? styles.credentialRowRefreshButtonLoading : ''}`.trim()}
@@ -102,7 +106,7 @@ function CredentialPlanBadge({ children, tone = 'neutral' }: { children: string;
   return <span className={`${styles.credentialPlanBadge} ${styles[`credentialPlanBadge${capitalize(tone)}`]}`.trim()}>{children}</span>
 }
 
-function AuthFileQuotaPanel({ row }: { row: AuthFileCredentialRow }) {
+function AuthFileQuotaPanel({ row, rotationPhase }: { row: AuthFileCredentialRow; rotationPhase: QuotaRotationPhase }) {
   const { t } = useTranslation()
 
   // 限额区域按加载、错误、刷新中、无缓存、可展示数据的顺序降级。
@@ -123,8 +127,8 @@ function AuthFileQuotaPanel({ row }: { row: AuthFileCredentialRow }) {
     <div className={styles.credentialQuotaPanel}>
       <div className={styles.credentialQuotaBars}>
         {/* 主/次窗口固定优先展示，额外窗口放到下方 chips，避免宽度被无限撑开。 */}
-        {row.primaryQuota && <QuotaBar quota={row.primaryQuota} />}
-        {row.secondaryQuota && <QuotaBar quota={row.secondaryQuota} />}
+        {row.primaryQuota && <QuotaBar quota={row.primaryQuota} rotationPhase={rotationPhase} />}
+        {row.secondaryQuota && <QuotaBar quota={row.secondaryQuota} rotationPhase={rotationPhase} />}
       </div>
       {row.extraQuota.length > 0 && (
         <div className={styles.credentialQuotaChips}>
@@ -138,6 +142,37 @@ function AuthFileQuotaPanel({ row }: { row: AuthFileCredentialRow }) {
       )}
     </div>
   )
+}
+
+export function getQuotaRotationPhase(nowMs = Date.now()): QuotaRotationPhase {
+  return Math.floor(nowMs / 5_000) % 2 === 0 ? 'percent' : 'reset'
+}
+
+function useQuotaRotationPhase(): QuotaRotationPhase {
+  const [phase, setPhase] = useState(() => getQuotaRotationPhase())
+
+  useEffect(() => {
+    // 所有行都按同一个墙钟 5 秒边界更新，避免每条刷新完成后从自己的动画起点开始跑。
+    let intervalId: ReturnType<typeof setInterval> | undefined
+    const timeoutId = setTimeout(() => {
+      setPhase(getQuotaRotationPhase())
+      intervalId = setInterval(() => setPhase(getQuotaRotationPhase()), 5_000)
+    }, 5_000 - (Date.now() % 5_000))
+
+    return () => {
+      clearTimeout(timeoutId)
+      if (intervalId) {
+        clearInterval(intervalId)
+      }
+    }
+  }, [])
+
+  return phase
+}
+
+function quotaRotationClassName(phase: QuotaRotationPhase): string {
+  const phaseClass = phase === 'percent' ? styles.credentialQuotaRotatingValuePercent : styles.credentialQuotaRotatingValueReset
+  return `${styles.credentialQuotaRotatingValue} ${phaseClass}`
 }
 
 export function formatQuotaResetLabel(resetAt: string): string {
@@ -159,7 +194,7 @@ export function formatQuotaResetLabel(resetAt: string): string {
   return `${duration}(${month}/${day} ${hour}:${minute})`
 }
 
-function QuotaBar({ quota }: { quota: DisplayQuota }) {
+function QuotaBar({ quota, rotationPhase }: { quota: DisplayQuota; rotationPhase: QuotaRotationPhase }) {
   // 条宽使用剩余额度百分比，颜色跟随剩余风险状态从绿到黄到红。
   const { t } = useTranslation()
   const percent = quota.barPercent ?? 0
@@ -172,7 +207,7 @@ function QuotaBar({ quota }: { quota: DisplayQuota }) {
       <div className={styles.credentialQuotaBarHeader}>
         <span>{quota.label}</span>
         {(percentLabel || resetLabel) && (
-          <strong className={percentLabel && resetLabel ? styles.credentialQuotaRotatingValue : ''}>
+          <strong className={percentLabel && resetLabel ? quotaRotationClassName(rotationPhase) : ''}>
             {percentLabel && <span>{percentLabel}</span>}
             {resetLabel && <span>{resetLabel}</span>}
           </strong>

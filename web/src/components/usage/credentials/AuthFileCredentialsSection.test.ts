@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { formatQuotaResetLabel } from './AuthFileCredentialsSection'
+import { formatQuotaResetLabel, getQuotaRotationPhase } from './AuthFileCredentialsSection'
 
 const formatLocalResetTime = (resetAt: string) => {
   const resetTime = new Date(resetAt)
@@ -9,6 +9,16 @@ const formatLocalResetTime = (resetAt: string) => {
   const minute = String(resetTime.getMinutes()).padStart(2, '0')
   return `${month}/${day} ${hour}:${minute}`
 }
+
+describe('AuthFileCredentialsSection quota value rotation', () => {
+  it('uses a shared wall-clock five-second phase for every quota row', () => {
+    expect(getQuotaRotationPhase(0)).toBe('percent')
+    expect(getQuotaRotationPhase(4_999)).toBe('percent')
+    expect(getQuotaRotationPhase(5_000)).toBe('reset')
+    expect(getQuotaRotationPhase(9_999)).toBe('reset')
+    expect(getQuotaRotationPhase(10_000)).toBe('percent')
+  })
+})
 
 describe('AuthFileCredentialsSection quota reset formatting', () => {
   it('formats reset labels with days when remaining time exceeds 24 hours', () => {
