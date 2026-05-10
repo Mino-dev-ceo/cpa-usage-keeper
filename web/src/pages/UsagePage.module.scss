@@ -393,8 +393,9 @@
   align-items: center;
   gap: 8px;
   flex-wrap: nowrap;
+  width: fit-content;
   min-width: 0;
-  max-width: 620px;
+  max-width: min(620px, 100%);
   padding: 6px 8px;
   border: 1px solid var(--border-color);
   border-radius: 9999px;
@@ -405,7 +406,6 @@
   transition: max-width 340ms cubic-bezier(0.22, 1, 0.36, 1), padding 340ms cubic-bezier(0.22, 1, 0.36, 1), border-width 340ms cubic-bezier(0.22, 1, 0.36, 1), opacity 260ms ease, transform 340ms cubic-bezier(0.22, 1, 0.36, 1);
 
   @include mobile {
-    width: 100%;
     align-items: center;
     flex-wrap: wrap;
   }
@@ -419,6 +419,14 @@
   opacity: 0;
   pointer-events: none;
   transform: translateX(8px);
+
+  @include mobile {
+    width: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    flex-basis: 0;
+  }
 }
 
 .customRangeInline {
@@ -448,6 +456,8 @@
 }
 
 .timeRangeSelectControl {
+  flex: 0 0 164px;
+  width: 164px;
   min-width: 164px;
 
   :global(button) {
@@ -513,7 +523,23 @@
   color: var(--error-color);
 }
 
-@include mobile {
+@media (max-width: #{$breakpoint-tablet}) {
+  .toolbarRow {
+    align-items: flex-start;
+  }
+
+  .toolbarActionsRight {
+    width: 100%;
+    align-items: flex-start;
+    justify-content: flex-start;
+    margin-left: 0;
+  }
+
+  .timeRangeGroup {
+    max-width: 100%;
+    border-radius: 24px;
+  }
+
   .customRangeInline {
     width: 100%;
     max-width: 0;
@@ -533,6 +559,16 @@
 
   .customRangeInput {
     width: 132px;
+  }
+}
+
+@include mobile {
+  .toolbarRow {
+    gap: 10px;
+  }
+
+  .container {
+    gap: 12px;
   }
 }
 
@@ -1232,68 +1268,10 @@
   white-space: nowrap;
 }
 
-.credentialChartContent {
+.credentialsSections {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-
-.credentialChartGrid {
-  display: grid;
-  grid-template-columns: minmax(154px, 224px) minmax(0, 1fr);
-  gap: 14px;
-  align-items: stretch;
-
-  @include mobile {
-    grid-template-columns: minmax(105px, 30%) minmax(0, 1fr);
-    gap: 10px;
-    overflow-x: auto;
-  }
-}
-
-.credentialChartLabels {
-  height: 320px;
-  min-height: 260px;
-  display: grid;
-  align-items: center;
-  padding: 10px 0;
-
-  @include mobile {
-    height: 380px;
-  }
-}
-
-.credentialChartLabelItem {
-  min-width: 0;
-  padding-right: 8px;
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.25;
-  text-align: right;
-}
-
-.credentialChartLabelName {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.credentialChartArea {
-  position: relative;
-  height: 320px;
-  min-height: 260px;
-  min-width: 360px;
-
-  @include mobile {
-    height: 380px;
-    min-width: 320px;
-  }
-
-  :global(canvas) {
-    touch-action: pan-x pan-y !important;
-  }
+  gap: 18px;
 }
 
 // Pricing Section (80%比例)
