@@ -3,6 +3,8 @@ package test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"cpa-usage-keeper/internal/cpa/dto/apicall"
@@ -56,5 +58,35 @@ func TestAntigravityProviderUsesProjectIDForQuotaRequest(t *testing.T) {
 	data, ok := request.Data.(map[string]string)
 	if !ok || data["project"] != "project-123" {
 		t.Fatalf("unexpected api-call data: %#v", request.Data)
+	}
+}
+
+func TestAntigravityProviderRejectsMissingProjectID(t *testing.T) {
+	caller := &recordingManagementCaller{}
+	provider := quota.NewAntigravityProvider(caller, quota.DefaultProviderConfigs().Antigravity[0])
+
+	_, err := provider.Check(context.Background(), quota.ProviderInput{Identity: entities.UsageIdentity{Identity: "ag-auth"}})
+	if !errors.Is(err, quota.ErrProviderInput) || !strings.Contains(err.Error(), "missing project_id parameter") {
+		t.Fatalf("expected missing project_id provider input error, got %v", err)
+	}
+	if len(caller.requests) != 0 {
+		t.Fatalf("provider should not call api-call without project_id, got %d requests", len(caller.requests))
+	}
+}
+
+func TestAntigravityProviderReturnsTargetErrorMessage(t *testing.T) {
+	caller := &recordingManagementCaller{responses: []*apicall.Response{{
+		StatusCode: 500,
+		BodyText:   `{"error":"backend unavailable"}`,
+		Body:       json.RawMessage(`{"error":"backend unavailable"}`),
+	}}}
+	provider := quota.NewAntigravityProvider(caller, quota.DefaultProviderConfigs().Antigravity[0])
+
+	_, err := provider.Check(context.Background(), quota.ProviderInput{Identity: entities.UsageIdentity{
+		Identity:  "ag-auth",
+		ProjectID: stringPtr("project-123"),
+	}})
+	if err == nil || err.Error() != "HTTP 500: backend unavailable" {
+		t.Fatalf("expected target HTTP message, got %v", err)
 	}
 }

@@ -96,6 +96,30 @@ func TestNormalizeCodexQuotaRows(t *testing.T) {
 	assertFloatField(t, additional.UsedPercent, 12, "additional usedPercent")
 }
 
+func TestNormalizeCodexPrimaryWindowUsesWindowSecondsForWeeklyLabel(t *testing.T) {
+	rows := quota.NormalizeQuotaRows(quota.ProviderOutput{Provider: "codex", Result: quota.CodexResult{Usage: &quota.CodexUsagePayload{
+		RateLimit: &quota.CodexRateLimitInfo{
+			PrimaryWindow: &quota.CodexUsageWindow{UsedPercent: 10, LimitWindowSeconds: 604800},
+		},
+	}}})
+
+	primary := findQuotaRow(t, rows, "rate_limit.primary_window")
+	assertQuotaText(t, primary, "Weekly", "window", "")
+	assertIntField(t, primary.Window.Seconds, 604800, "primary weekly window seconds")
+}
+
+func TestNormalizeCodexUnknownWindowDoesNotGuessFiveHourOrWeekly(t *testing.T) {
+	rows := quota.NormalizeQuotaRows(quota.ProviderOutput{Provider: "codex", Result: quota.CodexResult{Usage: &quota.CodexUsagePayload{
+		RateLimit: &quota.CodexRateLimitInfo{
+			PrimaryWindow: &quota.CodexUsageWindow{UsedPercent: 10, LimitWindowSeconds: 3600},
+		},
+	}}})
+
+	primary := findQuotaRow(t, rows, "rate_limit.primary_window")
+	assertQuotaText(t, primary, "Window", "window", "")
+	assertIntField(t, primary.Window.Seconds, 3600, "primary unknown window seconds")
+}
+
 func TestNormalizeGeminiCLIQuotaRows(t *testing.T) {
 	rows := quota.NormalizeQuotaRows(quota.ProviderOutput{Provider: "gemini-cli", Result: quota.GeminiCLIResult{
 		Quota: &quota.GeminiCliQuotaPayload{Buckets: []quota.GeminiCliQuotaBucket{{

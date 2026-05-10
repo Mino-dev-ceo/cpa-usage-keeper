@@ -6,15 +6,30 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 
 	"cpa-usage-keeper/internal/repository"
 
 	"gorm.io/gorm"
 )
 
+const (
+	defaultRefreshWorkerLimit = 5
+	defaultRefreshTaskTTL     = 20 * time.Minute
+	defaultRefreshTaskTimeout = 20 * time.Second
+)
+
 type Service struct {
 	db       *gorm.DB
 	registry ProviderRegistry
+
+	refreshMu            sync.Mutex
+	refreshTasks         map[string]*RefreshTaskRecord
+	refreshTaskIDsByAuth map[string]string
+	refreshWorkerTokens  chan struct{}
+	refreshTaskTTL       time.Duration
+	refreshTaskSeq       uint64
 }
 
 type CheckRequest struct {
@@ -31,7 +46,14 @@ func NewService(db *gorm.DB, caller ManagementAPICaller) *Service {
 }
 
 func NewServiceWithRegistry(db *gorm.DB, registry ProviderRegistry) *Service {
-	return &Service{db: db, registry: registry}
+	return &Service{
+		db:                   db,
+		registry:             registry,
+		refreshTasks:         make(map[string]*RefreshTaskRecord),
+		refreshTaskIDsByAuth: make(map[string]string),
+		refreshWorkerTokens:  make(chan struct{}, defaultRefreshWorkerLimit),
+		refreshTaskTTL:       defaultRefreshTaskTTL,
+	}
 }
 
 func (s *Service) Check(ctx context.Context, request CheckRequest) (CheckResponse, error) {

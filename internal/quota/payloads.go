@@ -298,7 +298,7 @@ func parseResponseObject(response *apicall.Response) (map[string]json.RawMessage
 		return nil, fmt.Errorf("missing quota response")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("quota response status %d", response.StatusCode)
+		return nil, targetHTTPError(response)
 	}
 	if object := rawObject(response.Body); object != nil {
 		return object, nil

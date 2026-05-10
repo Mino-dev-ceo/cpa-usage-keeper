@@ -3,6 +3,8 @@ package test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"cpa-usage-keeper/internal/cpa/dto/apicall"
@@ -77,6 +79,38 @@ func TestGeminiCLIProviderUsesProjectIDForQuotaAndCodeAssistRequests(t *testing.
 	body := string(encoded)
 	if !contains(body, `"quota":{"buckets"`) || !contains(body, `"codeAssist":{"currentTier"`) || contains(body, "bodyText") || contains(body, "statusCode") {
 		t.Fatalf("unexpected gemini cli result JSON: %s", body)
+	}
+}
+
+func TestGeminiCLIProviderRejectsMissingProjectID(t *testing.T) {
+	caller := &recordingManagementCaller{}
+	configs := quota.DefaultProviderConfigs()
+	provider := quota.NewGeminiCLIProvider(caller, configs.GeminiCLI, configs.GeminiCLICodeAssist)
+
+	_, err := provider.Check(context.Background(), quota.ProviderInput{Identity: entities.UsageIdentity{Identity: "gemini-auth"}})
+	if !errors.Is(err, quota.ErrProviderInput) || !strings.Contains(err.Error(), "missing project_id parameter") {
+		t.Fatalf("expected missing project_id provider input error, got %v", err)
+	}
+	if len(caller.requests) != 0 {
+		t.Fatalf("provider should not call api-call without project_id, got %d requests", len(caller.requests))
+	}
+}
+
+func TestGeminiCLIProviderReturnsTargetErrorMessage(t *testing.T) {
+	caller := &recordingManagementCaller{responses: []*apicall.Response{{
+		StatusCode: 403,
+		BodyText:   `{"message":"permission denied"}`,
+		Body:       json.RawMessage(`{"message":"permission denied"}`),
+	}}}
+	configs := quota.DefaultProviderConfigs()
+	provider := quota.NewGeminiCLIProvider(caller, configs.GeminiCLI, configs.GeminiCLICodeAssist)
+
+	_, err := provider.Check(context.Background(), quota.ProviderInput{Identity: entities.UsageIdentity{
+		Identity:  "gemini-auth",
+		ProjectID: stringPtr("project-123"),
+	}})
+	if err == nil || err.Error() != "HTTP 403: permission denied" {
+		t.Fatalf("expected target HTTP message, got %v", err)
 	}
 }
 

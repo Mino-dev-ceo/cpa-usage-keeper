@@ -3,6 +3,8 @@ package test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"cpa-usage-keeper/internal/cpa/dto/apicall"
@@ -67,11 +69,24 @@ func TestCodexProviderUsesAccountIDForUsageRequest(t *testing.T) {
 	}
 }
 
+func TestCodexProviderRejectsMissingAccountID(t *testing.T) {
+	caller := &recordingManagementCaller{}
+	provider := quota.NewCodexProvider(caller, quota.DefaultProviderConfigs().Codex)
+
+	_, err := provider.Check(context.Background(), quota.ProviderInput{Identity: entities.UsageIdentity{Identity: "codex-auth"}})
+	if !errors.Is(err, quota.ErrProviderInput) || !strings.Contains(err.Error(), "missing account_id parameter") {
+		t.Fatalf("expected missing account_id provider input error, got %v", err)
+	}
+	if len(caller.requests) != 0 {
+		t.Fatalf("provider should not call api-call without account_id, got %d requests", len(caller.requests))
+	}
+}
+
 func TestCodexProviderRejectsNonSuccessUsageResponse(t *testing.T) {
 	caller := &recordingManagementCaller{responses: []*apicall.Response{{
 		StatusCode: 429,
-		BodyText:   `{"error":"rate limited"}`,
-		Body:       json.RawMessage(`{"error":"rate limited"}`),
+		BodyText:   `{"error":{"message":"rate limited"}}`,
+		Body:       json.RawMessage(`{"error":{"message":"rate limited"}}`),
 	}}}
 	provider := quota.NewCodexProvider(caller, quota.DefaultProviderConfigs().Codex)
 
@@ -79,7 +94,7 @@ func TestCodexProviderRejectsNonSuccessUsageResponse(t *testing.T) {
 		Identity:  "codex-auth",
 		AccountID: stringPtr("acct_123"),
 	}})
-	if err == nil {
-		t.Fatalf("expected non-success usage response to return error")
+	if err == nil || err.Error() != "HTTP 429: rate limited" {
+		t.Fatalf("expected target HTTP message, got %v", err)
 	}
 }

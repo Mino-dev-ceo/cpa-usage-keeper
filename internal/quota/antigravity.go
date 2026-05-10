@@ -18,7 +18,7 @@ func NewAntigravityProvider(caller ManagementAPICaller, configs ...APICallConfig
 
 func (p antigravityProvider) Check(ctx context.Context, input ProviderInput) (ProviderOutput, error) {
 	if input.Identity.ProjectID == nil || *input.Identity.ProjectID == "" {
-		return ProviderOutput{}, fmt.Errorf("%w: antigravity project_id is required", ErrProviderInput)
+		return ProviderOutput{}, fmt.Errorf("%w: missing project_id parameter", ErrProviderInput)
 	}
 	if len(p.configs) == 0 {
 		return ProviderOutput{}, fmt.Errorf("%w: antigravity config is required", ErrProviderInput)

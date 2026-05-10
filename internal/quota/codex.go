@@ -18,7 +18,7 @@ func NewCodexProvider(caller ManagementAPICaller, config APICallConfig) Provider
 
 func (p codexProvider) Check(ctx context.Context, input ProviderInput) (ProviderOutput, error) {
 	if input.Identity.AccountID == nil || *input.Identity.AccountID == "" {
-		return ProviderOutput{}, fmt.Errorf("%w: codex account_id is required", ErrProviderInput)
+		return ProviderOutput{}, fmt.Errorf("%w: missing account_id parameter", ErrProviderInput)
 	}
 	request := apicall.Request{
 		AuthIndex: input.Identity.Identity,

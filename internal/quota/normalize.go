@@ -3,6 +3,7 @@ package quota
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -115,10 +116,40 @@ func appendCodexWindowQuotaRows(rows []QuotaRow, keyPrefix string, primaryLabel 
 	return rows
 }
 
+func codexWindowLabel(label string, seconds int64) string {
+	switch seconds {
+	case 18000:
+		if strings.Contains(label, "Weekly") {
+			return strings.Replace(label, "Weekly", "5h", 1)
+		}
+		return label
+	case 604800:
+		if strings.Contains(label, "5h") {
+			return strings.Replace(label, "5h", "Weekly", 1)
+		}
+		return label
+	}
+	return codexUnknownWindowLabel(label)
+}
+
+func codexUnknownWindowLabel(label string) string {
+	if label == "5h" || label == "Weekly" {
+		return "Window"
+	}
+	if strings.Contains(label, "5h") {
+		return strings.Replace(label, "5h", "Window", 1)
+	}
+	if strings.Contains(label, "Weekly") {
+		return strings.Replace(label, "Weekly", "Window", 1)
+	}
+	return label
+}
+
 func appendCodexWindowQuotaRow(rows []QuotaRow, key string, label string, scope string, metric string, info *CodexRateLimitInfo, window *CodexUsageWindow) []QuotaRow {
 	if window == nil {
 		return rows
 	}
+	label = codexWindowLabel(label, window.LimitWindowSeconds)
 	row := QuotaRow{
 		Key:               key,
 		Label:             label,

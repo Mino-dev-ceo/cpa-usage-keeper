@@ -1,5 +1,13 @@
 package quota
 
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"cpa-usage-keeper/internal/cpa/dto/apicall"
+)
+
 func mergeHeaders(base map[string]string, overrides map[string]string) map[string]string {
 	if len(base) == 0 && len(overrides) == 0 {
 		return nil
@@ -12,4 +20,43 @@ func mergeHeaders(base map[string]string, overrides map[string]string) map[strin
 		headers[key] = value
 	}
 	return headers
+}
+
+func targetHTTPError(response *apicall.Response) error {
+	return fmt.Errorf("HTTP %d: %s", response.StatusCode, targetErrorMessage(response))
+}
+
+func targetErrorMessage(response *apicall.Response) string {
+	for _, data := range [][]byte{response.Body, []byte(strings.TrimSpace(response.BodyText))} {
+		if message := targetErrorMessageFromBytes(data); message != "" {
+			return message
+		}
+	}
+	return strings.TrimSpace(response.BodyText)
+}
+
+func targetErrorMessageFromBytes(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		return strings.TrimSpace(text)
+	}
+	object := rawObject(data)
+	if object == nil {
+		return strings.TrimSpace(string(data))
+	}
+	if message := stringField(object, "message", "error_description", "detail"); message != "" {
+		return message
+	}
+	if errorText := stringField(object, "error"); errorText != "" {
+		return errorText
+	}
+	if nested := objectField(object, "error"); nested != nil {
+		if message := stringField(nested, "message", "detail", "error_description"); message != "" {
+			return message
+		}
+	}
+	return strings.TrimSpace(string(data))
 }

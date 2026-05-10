@@ -19,7 +19,7 @@ func NewGeminiCLIProvider(caller ManagementAPICaller, config APICallConfig, code
 
 func (p geminiCLIProvider) Check(ctx context.Context, input ProviderInput) (ProviderOutput, error) {
 	if input.Identity.ProjectID == nil || *input.Identity.ProjectID == "" {
-		return ProviderOutput{}, fmt.Errorf("%w: gemini cli project_id is required", ErrProviderInput)
+		return ProviderOutput{}, fmt.Errorf("%w: missing project_id parameter", ErrProviderInput)
 	}
 	quotaResponse, err := p.caller.CallManagementAPI(ctx, apicall.Request{
 		AuthIndex: input.Identity.Identity,

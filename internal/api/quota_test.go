@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -12,9 +14,18 @@ import (
 )
 
 type quotaProviderStub struct {
-	request  quota.CheckRequest
-	response quota.CheckResponse
-	err      error
+	request         quota.CheckRequest
+	response        quota.CheckResponse
+	err             error
+	refreshRequest  quota.RefreshRequest
+	refreshResponse quota.RefreshResponse
+	refreshErr      error
+	taskID          string
+	taskResponse    quota.RefreshTaskResponse
+	taskErr         error
+	cacheRequest    quota.CacheRequest
+	cacheResponse   quota.CacheResponse
+	cacheErr        error
 }
 
 func (s *quotaProviderStub) Check(ctx context.Context, request quota.CheckRequest) (quota.CheckResponse, error) {
@@ -23,6 +34,30 @@ func (s *quotaProviderStub) Check(ctx context.Context, request quota.CheckReques
 		return quota.CheckResponse{}, s.err
 	}
 	return s.response, nil
+}
+
+func (s *quotaProviderStub) Refresh(ctx context.Context, request quota.RefreshRequest) (quota.RefreshResponse, error) {
+	s.refreshRequest = request
+	if s.refreshErr != nil {
+		return quota.RefreshResponse{}, s.refreshErr
+	}
+	return s.refreshResponse, nil
+}
+
+func (s *quotaProviderStub) GetRefreshTask(ctx context.Context, taskID string) (quota.RefreshTaskResponse, error) {
+	s.taskID = taskID
+	if s.taskErr != nil {
+		return quota.RefreshTaskResponse{}, s.taskErr
+	}
+	return s.taskResponse, nil
+}
+
+func (s *quotaProviderStub) GetCachedQuota(ctx context.Context, request quota.CacheRequest) (quota.CacheResponse, error) {
+	s.cacheRequest = request
+	if s.cacheErr != nil {
+		return quota.CacheResponse{}, s.cacheErr
+	}
+	return s.cacheResponse, nil
 }
 
 func floatPtr(value float64) *float64 {
@@ -128,7 +163,7 @@ func TestQuotaCheckMapsUnsupportedTypeTo422(t *testing.T) {
 }
 
 func TestQuotaCheckMapsProviderInputTo422(t *testing.T) {
-	provider := &quotaProviderStub{err: quota.ErrProviderInput}
+	provider := &quotaProviderStub{err: errors.Join(quota.ErrProviderInput, errors.New("missing account_id parameter"))}
 	router := NewRouter(nil, nil, nil, nil, AuthConfig{}, nil, "", OptionalProviders{Quota: provider})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/quota/check", strings.NewReader(`{"auth_index":"codex-auth"}`))
@@ -138,6 +173,167 @@ func TestQuotaCheckMapsProviderInputTo422(t *testing.T) {
 
 	if resp.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected status 422, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	if !contains(resp.Body.String(), "missing account_id parameter") {
+		t.Fatalf("expected provider input message in response, got %s", resp.Body.String())
+	}
+}
+
+func TestQuotaCacheReturnsCachedCurrentPageQuota(t *testing.T) {
+	provider := &quotaProviderStub{cacheResponse: quota.CacheResponse{
+		Items: []quota.CheckResponse{{ID: "auth-1", Quota: []quota.QuotaRow{{Key: "rate_limit.secondary_window", Label: "Weekly"}}}},
+	}}
+	router := NewRouter(nil, nil, nil, nil, AuthConfig{}, nil, "", OptionalProviders{Quota: provider})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/quota/cache", strings.NewReader(`{"auth_indexes":["auth-1","auth-2"],"limit":20}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	if got := strings.Join(provider.cacheRequest.AuthIndexes, ","); got != "auth-1,auth-2" {
+		t.Fatalf("expected auth indexes to be forwarded, got %+v", provider.cacheRequest.AuthIndexes)
+	}
+	if provider.cacheRequest.Limit != 20 {
+		t.Fatalf("expected outer cache limit 20, got %d", provider.cacheRequest.Limit)
+	}
+	body := resp.Body.String()
+	if !contains(body, `"items"`) || !contains(body, `"id":"auth-1"`) || !contains(body, `"label":"Weekly"`) {
+		t.Fatalf("unexpected response body: %s", body)
+	}
+}
+
+func TestQuotaCacheAllowsMoreThanRefreshLimit(t *testing.T) {
+	provider := &quotaProviderStub{}
+	router := NewRouter(nil, nil, nil, nil, AuthConfig{}, nil, "", OptionalProviders{Quota: provider})
+	authIndexes := make([]string, 21)
+	for i := range authIndexes {
+		authIndexes[i] = "auth-" + strconv.Itoa(i+1)
+	}
+	bodyBytes, err := json.Marshal(map[string]any{"auth_indexes": authIndexes, "limit": 50})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/quota/cache", strings.NewReader(string(bodyBytes)))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	if provider.cacheRequest.Limit != 50 || len(provider.cacheRequest.AuthIndexes) != 21 {
+		t.Fatalf("expected cache request to bypass refresh limit, got %+v", provider.cacheRequest)
+	}
+}
+
+func TestQuotaRefreshCreatesTasksForCurrentPageAuthIndexes(t *testing.T) {
+	provider := &quotaProviderStub{refreshResponse: quota.RefreshResponse{
+		Tasks:    []quota.RefreshTaskID{{AuthIndex: "auth-1", TaskID: "task-1"}, {AuthIndex: "auth-2", TaskID: "task-2"}},
+		Accepted: 2,
+		Limit:    20,
+	}}
+	router := NewRouter(nil, nil, nil, nil, AuthConfig{}, nil, "", OptionalProviders{Quota: provider})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/quota/refresh", strings.NewReader(`{"auth_indexes":["auth-1","auth-2"],"limit":20}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	if got := strings.Join(provider.refreshRequest.AuthIndexes, ","); got != "auth-1,auth-2" {
+		t.Fatalf("expected auth indexes to be forwarded, got %+v", provider.refreshRequest.AuthIndexes)
+	}
+	if provider.refreshRequest.Limit != 20 {
+		t.Fatalf("expected outer refresh limit 20, got %d", provider.refreshRequest.Limit)
+	}
+	if provider.refreshRequest.Source != quota.RefreshSourceManual {
+		t.Fatalf("expected manual refresh source, got %q", provider.refreshRequest.Source)
+	}
+	body := resp.Body.String()
+	if !contains(body, `"tasks"`) || !contains(body, `"taskId":"task-1"`) || !contains(body, `"accepted":2`) || !contains(body, `"limit":20`) {
+		t.Fatalf("unexpected response body: %s", body)
+	}
+}
+
+func TestQuotaRefreshRejectsTooManyAuthIndexesAtOuterLayer(t *testing.T) {
+	provider := &quotaProviderStub{}
+	router := NewRouter(nil, nil, nil, nil, AuthConfig{}, nil, "", OptionalProviders{Quota: provider})
+	authIndexes := make([]string, 0, 21)
+	for i := 0; i < 21; i++ {
+		authIndexes = append(authIndexes, `"auth"`)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/quota/refresh", strings.NewReader(`{"auth_indexes":[`+strings.Join(authIndexes, ",")+"]}"))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	if provider.refreshRequest.AuthIndexes != nil {
+		t.Fatalf("provider should not be called for oversized refresh request, got %+v", provider.refreshRequest)
+	}
+}
+
+func TestQuotaRefreshRejectsEmptyAuthIndexes(t *testing.T) {
+	provider := &quotaProviderStub{}
+	router := NewRouter(nil, nil, nil, nil, AuthConfig{}, nil, "", OptionalProviders{Quota: provider})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/quota/refresh", strings.NewReader(`{"auth_indexes":[],"limit":20}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	if provider.refreshRequest.AuthIndexes != nil {
+		t.Fatalf("provider should not be called for empty refresh request, got %+v", provider.refreshRequest)
+	}
+}
+
+func TestQuotaRefreshTaskReturnsCachedQuota(t *testing.T) {
+	provider := &quotaProviderStub{taskResponse: quota.RefreshTaskResponse{
+		TaskID:    "task-1",
+		AuthIndex: "auth-1",
+		Status:    quota.RefreshTaskStatusCompleted,
+		Quota:     &quota.CheckResponse{ID: "auth-1", Quota: []quota.QuotaRow{{Key: "rate_limit.primary_window", Label: "5h"}}},
+	}}
+	router := NewRouter(nil, nil, nil, nil, AuthConfig{}, nil, "", OptionalProviders{Quota: provider})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/quota/refresh/task-1", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	if provider.taskID != "task-1" {
+		t.Fatalf("expected task id to be forwarded, got %q", provider.taskID)
+	}
+	body := resp.Body.String()
+	if !contains(body, `"status":"completed"`) || !contains(body, `"quota":{"id":"auth-1"`) || !contains(body, `"key":"rate_limit.primary_window"`) {
+		t.Fatalf("unexpected response body: %s", body)
+	}
+}
+
+func TestQuotaRefreshTaskMapsNotFoundTo404(t *testing.T) {
+	provider := &quotaProviderStub{taskErr: quota.ErrTaskNotFound}
+	router := NewRouter(nil, nil, nil, nil, AuthConfig{}, nil, "", OptionalProviders{Quota: provider})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/quota/refresh/missing-task", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d body=%s", resp.Code, resp.Body.String())
 	}
 }
 
