@@ -5,7 +5,14 @@ import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Select } from '@/components/ui/Select';
 import type { UsageEvent, UsageSourceFilterOption } from '@/lib/types';
-import { formatDurationMs, LATENCY_SOURCE_FIELD, normalizeAuthIndex } from '@/utils/usage';
+import {
+  formatDurationMs,
+  formatUsd,
+  isAnthropicStyleProvider,
+  LATENCY_SOURCE_FIELD,
+  normalizeAuthIndex,
+  type ModelPrice,
+} from '@/utils/usage';
 import { downloadBlob } from '@/utils/download';
 import styles from '@/pages/UsagePage.module.scss';
 
@@ -42,6 +49,8 @@ type RequestEventRow = {
   reasoningTokens: number;
   cachedTokens: number;
   totalTokens: number;
+  cost: number;
+  hasPrice: boolean;
 };
 
 export interface RequestEventsDetailsCardProps {
@@ -57,6 +66,7 @@ export interface RequestEventsDetailsCardProps {
   modelFilter: string;
   sourceFilter: string;
   resultFilter: string;
+  modelPrices: Record<string, ModelPrice>;
   onPageChange: (page: number) => void;
   onPageSizeChange: (pageSize: number) => void;
   onModelFilterChange: (model: string) => void;
@@ -100,6 +110,7 @@ export function RequestEventsDetailsCard({
   modelFilter,
   sourceFilter,
   resultFilter,
+  modelPrices,
   onPageChange,
   onPageSizeChange,
   onModelFilterChange,
@@ -132,6 +143,15 @@ export function RequestEventsDetailsCard({
       const cachedTokens = Math.max(toNumber(event.tokens?.cached_tokens), 0);
       const totalTokens = Math.max(toNumber(event.tokens?.total_tokens), 0);
       const latencyMs = Number.isFinite(event.latency_ms) ? event.latency_ms : null;
+      const pricing = modelPrices[model];
+      const promptTokens = isAnthropicStyleProvider(sourceType)
+        ? inputTokens
+        : Math.max(inputTokens - cachedTokens, 0);
+      const cost = pricing
+        ? (promptTokens / 1_000_000) * pricing.prompt +
+          (outputTokens / 1_000_000) * pricing.completion +
+          (cachedTokens / 1_000_000) * pricing.cache
+        : 0;
 
       return {
         id: event.id ? String(event.id) : `${timestamp}-${model}-${sourceRaw || source}-${authIndex}-${index}`,
@@ -151,9 +171,11 @@ export function RequestEventsDetailsCard({
         reasoningTokens,
         cachedTokens,
         totalTokens,
+        cost,
+        hasPrice: Boolean(pricing),
       };
     });
-  }, [events, i18n.language]);
+  }, [events, i18n.language, modelPrices]);
 
   const hasLatencyData = useMemo(() => rows.some((row) => row.latencyMs !== null), [rows]);
 
@@ -239,6 +261,7 @@ export function RequestEventsDetailsCard({
       'reasoning_tokens',
       'cached_tokens',
       'total_tokens',
+      'cost_usd',
     ];
 
     const csvRows = rows.map((row) =>
@@ -255,6 +278,7 @@ export function RequestEventsDetailsCard({
         row.reasoningTokens,
         row.cachedTokens,
         row.totalTokens,
+        row.hasPrice ? row.cost.toFixed(6) : '',
       ]
         .map((value) => encodeCsv(value))
         .join(',')
@@ -286,6 +310,7 @@ export function RequestEventsDetailsCard({
         cached_tokens: row.cachedTokens,
         total_tokens: row.totalTokens,
       },
+      ...(row.hasPrice ? { cost_usd: Number(row.cost.toFixed(6)) } : {}),
     }));
 
     const content = JSON.stringify(payload, null, 2);
@@ -433,6 +458,7 @@ export function RequestEventsDetailsCard({
                   <th>{t('usage_stats.reasoning_tokens')}</th>
                   <th>{t('usage_stats.cached_tokens')}</th>
                   <th>{t('usage_stats.total_tokens')}</th>
+                  <th>{t('usage_stats.total_cost')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -476,6 +502,9 @@ export function RequestEventsDetailsCard({
                     <td>{row.reasoningTokens.toLocaleString()}</td>
                     <td>{row.cachedTokens.toLocaleString()}</td>
                     <td>{row.totalTokens.toLocaleString()}</td>
+                    <td title={row.hasPrice ? undefined : t('usage_stats.cost_need_price')}>
+                      {row.hasPrice ? formatUsd(row.cost) : '-'}
+                    </td>
                   </tr>
                 ))}
               </tbody>
