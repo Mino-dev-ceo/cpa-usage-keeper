@@ -76,6 +76,7 @@ type UsageAnalysisModelStat struct {
 type UsageAnalysisAPIStat struct {
 	APIKey          string
 	DisplayName     string
+	Note            string
 	TotalRequests   int64
 	SuccessCount    int64
 	FailureCount    int64
@@ -91,6 +92,11 @@ type UsageAnalysisAPIStat struct {
 type UsageAnalysisSnapshot struct {
 	APIs   []UsageAnalysisAPIStat
 	Models []UsageAnalysisModelStat
+}
+
+type APIKeyNote struct {
+	APIAlias string
+	Note     string
 }
 
 // UsageOverviewSummary 是 overview summary 的服务层结果。

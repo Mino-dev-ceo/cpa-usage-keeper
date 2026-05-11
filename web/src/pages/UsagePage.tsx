@@ -13,7 +13,7 @@ import {
   Legend,
   Filler
 } from 'chart.js';
-import { ApiError, fetchStatus, fetchUpdateCheck, fetchUsageAnalysis, fetchUsageEventModelFilterOptions, fetchUsageEventSourceFilterOptions, fetchUsageEvents } from '@/lib/api';
+import { ApiError, fetchStatus, fetchUpdateCheck, fetchUsageAnalysis, fetchUsageEventModelFilterOptions, fetchUsageEventSourceFilterOptions, fetchUsageEvents, updateAPIKeyNote } from '@/lib/api';
 import type { StatusResponse, UsageAnalysisResponse, UsageEvent, UsageSourceFilterOption } from '@/lib/types';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
@@ -1030,7 +1030,9 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
   const apiStats = useMemo(
     () => analysisData.apis.map((api) => ({
       endpoint: api.api_key,
-      displayName: api.display_name || api.api_key,
+      displayName: api.note?.trim() || api.display_name || api.api_key,
+      keyDisplayName: api.display_name || api.api_key,
+      note: api.note?.trim() || '',
       totalRequests: api.total_requests,
       successCount: api.success_count,
       failureCount: api.failure_count,
@@ -1053,6 +1055,23 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
     })),
     [analysisData.apis, modelPrices]
   );
+
+  const handleSaveApiNote = useCallback(async (apiKey: string, note: string) => {
+    try {
+      const saved = await updateAPIKeyNote(apiKey, note);
+      setAnalysisData((current) => ({
+        ...current,
+        apis: current.apis.map((api) => (
+          api.api_key === apiKey ? { ...api, note: saved.note } : api
+        )),
+      }));
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        onAuthRequired?.();
+      }
+      throw error;
+    }
+  }, [onAuthRequired]);
   const modelStats = useMemo(
     () => analysisData.models.map((model) => {
       const pricing = modelPrices[model.model];
@@ -1351,7 +1370,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
               <>
                 {analysisError && <div className={styles.errorBox}>{analysisError}</div>}
                 <div className={styles.detailsGrid}>
-                  <ApiDetailsCard apiStats={apiStats} loading={analysisLoading} hasPrices={hasPrices} />
+                  <ApiDetailsCard apiStats={apiStats} loading={analysisLoading} hasPrices={hasPrices} onSaveNote={handleSaveApiNote} />
                   <ModelStatsCard modelStats={modelStats} loading={analysisLoading} hasPrices={hasPrices} />
                 </div>
               </>

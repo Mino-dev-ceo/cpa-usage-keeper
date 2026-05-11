@@ -253,6 +253,25 @@ export async function fetchUsageAnalysis(range: string, start?: string, end?: st
   return response.json()
 }
 
+export interface APIKeyNoteResponse {
+  api_key: string
+  note: string
+}
+
+export async function updateAPIKeyNote(apiKey: string, note: string): Promise<APIKeyNoteResponse> {
+  const response = await apiFetch(apiPath(`/api-key-notes/${encodeURIComponent(apiKey)}`), {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ note }),
+  })
+  if (!response.ok) {
+    await parseApiError(response, `Failed to update API key note: ${response.status}`)
+  }
+  return response.json()
+}
+
 export async function fetchUsedModels(signal?: AbortSignal): Promise<UsedModelsResponse> {
   const response = await apiFetch(apiPath('/models/used'), { signal })
   if (!response.ok) {

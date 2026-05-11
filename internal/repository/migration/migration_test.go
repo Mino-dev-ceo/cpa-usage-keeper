@@ -35,6 +35,7 @@ func TestOrderedMigrationsPreservesExecutionOrder(t *testing.T) {
 		"20260508_add_usage_event_model_alias",
 		"20260509_update_usage_identity_quota_fields",
 		"20260510_remove_usage_identity_quota_fields",
+		"20260511_create_api_key_notes",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("expected ordered migrations %v, got %v", want, got)
@@ -64,6 +65,9 @@ func TestOpenDatabaseRunsSchemaMigrationsAndAddsUsageEventRedisFields(t *testing
 	if !db.Migrator().HasColumn(&entities.UsageIdentity{}, "lookup_key") {
 		t.Fatal("expected usage_identities.lookup_key column to exist")
 	}
+	if !db.Migrator().HasTable(&entities.APIKeyNote{}) {
+		t.Fatal("expected api_key_notes table to exist")
+	}
 
 	var versions []string
 	if err := db.Table("schema_migrations").Order("version asc").Pluck("version", &versions).Error; err != nil {
@@ -87,6 +91,7 @@ func TestOpenDatabaseRunsSchemaMigrationsAndAddsUsageEventRedisFields(t *testing
 		"20260508_add_usage_event_model_alias",
 		"20260509_update_usage_identity_quota_fields",
 		"20260510_remove_usage_identity_quota_fields",
+		"20260511_create_api_key_notes",
 	}
 	if len(versions) != len(expected) {
 		t.Fatalf("expected migration versions %v, got %v", expected, versions)

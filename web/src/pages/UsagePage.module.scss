@@ -1064,23 +1064,34 @@
   width: 100%;
   display: flex;
   justify-content: space-between;
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px;
+  background: transparent;
+  transition: background-color 0.15s ease;
+
+  &:hover {
+    background-color: var(--bg-tertiary);
+  }
+}
+
+.apiHeaderMain {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
   align-items: center;
-  padding: 10px;
+  gap: 8px;
+  padding: 2px;
   border: 0;
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: background-color 0.15s ease;
-
-  &:hover {
-    background-color: var(--bg-tertiary);
-  }
-
   &:focus-visible {
     outline: 2px solid var(--primary-color);
-    outline-offset: -2px;
+    outline-offset: 2px;
   }
 }
 
@@ -1096,6 +1107,12 @@
   font-weight: 600;
   color: var(--text-primary);
   font-size: 13px;
+  word-break: break-all;
+}
+
+.apiKeyAlias {
+  color: var(--text-tertiary);
+  font-size: 11px;
   word-break: break-all;
 }
 
@@ -1118,6 +1135,121 @@
   color: var(--text-secondary);
   font-size: 12px;
   margin-left: 6px;
+  align-self: center;
+}
+
+.apiNoteButton {
+  align-self: center;
+  flex: 0 0 auto;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-full;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 10px;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+
+  &:hover:not(:disabled) {
+    border-color: rgba($primary-color, 0.45);
+    color: var(--text-primary);
+  }
+
+  &:disabled {
+    cursor: wait;
+    opacity: 0.65;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+  }
+}
+
+.apiNoteEditor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 8px 8px;
+  padding: 10px;
+  border: 1px dashed color-mix(in srgb, var(--border-color) 78%, var(--primary-color));
+  border-radius: $radius-md;
+  background: color-mix(in srgb, var(--bg-primary) 82%, var(--bg-secondary));
+}
+
+.apiNoteLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+
+  input {
+    width: 100%;
+    min-height: 34px;
+    border: 1px solid var(--border-color);
+    border-radius: $radius-md;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 12px;
+    padding: 7px 10px;
+
+    &:focus {
+      border-color: rgba($primary-color, 0.55);
+      outline: none;
+      box-shadow: 0 0 0 3px rgba($primary-color, 0.12);
+    }
+  }
+}
+
+.apiNoteActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.apiNoteSaveButton,
+.apiNoteGhostButton {
+  border-radius: $radius-full;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 11px;
+
+  &:disabled {
+    cursor: wait;
+    opacity: 0.65;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+  }
+}
+
+.apiNoteSaveButton {
+  border: 1px solid rgba($primary-color, 0.45);
+  background: color-mix(in srgb, var(--primary-color) 18%, var(--bg-primary));
+  color: var(--text-primary);
+}
+
+.apiNoteGhostButton {
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.apiNoteError {
+  color: var(--error-color);
+  font-size: 11px;
 }
 
 .apiModels {

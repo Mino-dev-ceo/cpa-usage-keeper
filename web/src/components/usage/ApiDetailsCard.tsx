@@ -18,16 +18,21 @@ export interface ApiDetailsCardProps {
   apiStats: ApiStats[];
   loading: boolean;
   hasPrices: boolean;
+  onSaveNote?: (apiKey: string, note: string) => Promise<void>;
 }
 
 type ApiSortKey = 'endpoint' | 'requests' | 'tokens' | 'cost';
 type SortDir = 'asc' | 'desc';
 
-export function ApiDetailsCard({ apiStats, loading, hasPrices }: ApiDetailsCardProps) {
+export function ApiDetailsCard({ apiStats, loading, hasPrices, onSaveNote }: ApiDetailsCardProps) {
   const { t } = useTranslation();
   const [expandedApis, setExpandedApis] = useState<Set<string>>(new Set());
   const [sortKey, setSortKey] = useState<ApiSortKey>('requests');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [editingEndpoint, setEditingEndpoint] = useState<string | null>(null);
+  const [draftNote, setDraftNote] = useState('');
+  const [savingEndpoint, setSavingEndpoint] = useState<string | null>(null);
+  const [noteError, setNoteError] = useState<string | null>(null);
 
   const toggleExpand = (endpoint: string) => {
     setExpandedApis((prev) => {
@@ -47,6 +52,33 @@ export function ApiDetailsCard({ apiStats, loading, hasPrices }: ApiDetailsCardP
     } else {
       setSortKey(key);
       setSortDir(key === 'endpoint' ? 'asc' : 'desc');
+    }
+  };
+
+  const beginEditNote = (api: ApiStats) => {
+    setEditingEndpoint(api.endpoint);
+    setDraftNote(api.note ?? '');
+    setNoteError(null);
+  };
+
+  const cancelEditNote = () => {
+    setEditingEndpoint(null);
+    setDraftNote('');
+    setNoteError(null);
+  };
+
+  const saveNote = async (endpoint: string) => {
+    if (!onSaveNote) return;
+    setSavingEndpoint(endpoint);
+    setNoteError(null);
+    try {
+      await onSaveNote(endpoint, draftNote);
+      setEditingEndpoint(null);
+      setDraftNote('');
+    } catch (error) {
+      setNoteError(error instanceof Error ? error.message : t('usage_stats.api_note_save_failed'));
+    } finally {
+      setSavingEndpoint(null);
     }
   };
 
@@ -105,45 +137,102 @@ export function ApiDetailsCard({ apiStats, loading, hasPrices }: ApiDetailsCardP
             <div className={styles.apiList}>
               {sorted.map((api, index) => {
                 const isExpanded = expandedApis.has(api.endpoint);
+                const isEditing = editingEndpoint === api.endpoint;
+                const isSaving = savingEndpoint === api.endpoint;
                 const panelId = `api-models-${index}`;
 
                 return (
                   <div key={api.endpoint} className={styles.apiItem}>
-                    <button
-                      type="button"
-                      className={styles.apiHeader}
-                      onClick={() => toggleExpand(api.endpoint)}
-                      aria-expanded={isExpanded}
-                      aria-controls={panelId}
-                    >
-                      <div className={styles.apiInfo}>
-                        <span className={styles.apiEndpoint}>{api.displayName}</span>
-                        <div className={styles.apiStats}>
-                          <span className={styles.apiBadge}>
-                            <span className={styles.requestCountCell}>
-                              <span>
-                                {t('usage_stats.requests_count')}: {api.totalRequests.toLocaleString()}
-                              </span>
-                              <span className={styles.requestBreakdown}>
-                                (<span className={styles.statSuccess}>{api.successCount.toLocaleString()}</span>{' '}
-                                <span className={styles.statFailure}>{api.failureCount.toLocaleString()}</span>)
-                              </span>
-                            </span>
-                          </span>
-                          <span className={styles.apiBadge}>
-                            {t('usage_stats.tokens_count')}: {formatCompactNumber(api.totalTokens)}
-                          </span>
-                          {hasPrices && api.totalCost > 0 && (
+                    <div className={styles.apiHeader}>
+                      <button
+                        type="button"
+                        className={styles.apiHeaderMain}
+                        onClick={() => toggleExpand(api.endpoint)}
+                        aria-expanded={isExpanded}
+                        aria-controls={panelId}
+                      >
+                        <div className={styles.apiInfo}>
+                          <span className={styles.apiEndpoint}>{api.displayName}</span>
+                          {api.note && <span className={styles.apiKeyAlias}>{api.keyDisplayName}</span>}
+                          <div className={styles.apiStats}>
                             <span className={styles.apiBadge}>
-                              {t('usage_stats.total_cost')}: {formatUsd(api.totalCost)}
+                              <span className={styles.requestCountCell}>
+                                <span>
+                                  {t('usage_stats.requests_count')}: {api.totalRequests.toLocaleString()}
+                                </span>
+                                <span className={styles.requestBreakdown}>
+                                  (<span className={styles.statSuccess}>{api.successCount.toLocaleString()}</span>{' '}
+                                  <span className={styles.statFailure}>{api.failureCount.toLocaleString()}</span>)
+                                </span>
+                              </span>
                             </span>
+                            <span className={styles.apiBadge}>
+                              {t('usage_stats.tokens_count')}: {formatCompactNumber(api.totalTokens)}
+                            </span>
+                            {hasPrices && api.totalCost > 0 && (
+                              <span className={styles.apiBadge}>
+                                {t('usage_stats.total_cost')}: {formatUsd(api.totalCost)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <span className={styles.expandIcon}>
+                          {isExpanded ? '▼' : '▶'}
+                        </span>
+                      </button>
+                      {onSaveNote && (
+                        <button
+                          type="button"
+                          className={styles.apiNoteButton}
+                          onClick={() => beginEditNote(api)}
+                          disabled={isSaving}
+                        >
+                          {api.note ? t('usage_stats.api_note_edit') : t('usage_stats.api_note_add')}
+                        </button>
+                      )}
+                    </div>
+                    {isEditing && (
+                      <form
+                        className={styles.apiNoteEditor}
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void saveNote(api.endpoint);
+                        }}
+                      >
+                        <label className={styles.apiNoteLabel}>
+                          <span>{t('usage_stats.api_note_label')}</span>
+                          <input
+                            value={draftNote}
+                            maxLength={80}
+                            onChange={(event) => setDraftNote(event.target.value)}
+                            placeholder={t('usage_stats.api_note_placeholder')}
+                            disabled={isSaving}
+                          />
+                        </label>
+                        <div className={styles.apiNoteActions}>
+                          <button type="submit" className={styles.apiNoteSaveButton} disabled={isSaving}>
+                            {isSaving ? t('common.loading') : t('usage_stats.api_note_save')}
+                          </button>
+                          <button type="button" className={styles.apiNoteGhostButton} onClick={cancelEditNote} disabled={isSaving}>
+                            {t('usage_stats.api_note_cancel')}
+                          </button>
+                          {api.note && (
+                            <button
+                              type="button"
+                              className={styles.apiNoteGhostButton}
+                              onClick={() => {
+                                setDraftNote('');
+                                void saveNote(api.endpoint);
+                              }}
+                              disabled={isSaving}
+                            >
+                              {t('usage_stats.api_note_clear')}
+                            </button>
                           )}
                         </div>
-                      </div>
-                      <span className={styles.expandIcon}>
-                        {isExpanded ? '▼' : '▶'}
-                      </span>
-                    </button>
+                        {noteError && <div className={styles.apiNoteError}>{noteError}</div>}
+                      </form>
+                    )}
                     {isExpanded && (
                       <div id={panelId} className={styles.apiModels}>
                         {Object.entries(api.models).map(([model, stats]) => (

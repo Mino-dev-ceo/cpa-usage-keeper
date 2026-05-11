@@ -18,6 +18,7 @@ type usageAnalysisResponse struct {
 type usageAnalysisAPIPayload struct {
 	APIKey          string                      `json:"api_key"`
 	DisplayName     string                      `json:"display_name"`
+	Note            string                      `json:"note,omitempty"`
 	TotalRequests   int64                       `json:"total_requests"`
 	SuccessCount    int64                       `json:"success_count"`
 	FailureCount    int64                       `json:"failure_count"`
@@ -94,6 +95,7 @@ func buildUsageAnalysisPayload(snapshot *servicedto.UsageAnalysisSnapshot) usage
 		apis = append(apis, usageAnalysisAPIPayload{
 			APIKey:          apiKey,
 			DisplayName:     displayName,
+			Note:            api.Note,
 			TotalRequests:   api.TotalRequests,
 			SuccessCount:    api.SuccessCount,
 			FailureCount:    api.FailureCount,

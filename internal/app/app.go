@@ -88,12 +88,12 @@ func NewWithConfig(cfg config.Config) (*App, error) {
 		backupMaintenance = NewDatabaseBackupRunner(backupStore, backupStore, cfg.BackupInterval, cfg.BackupRetentionDays)
 	}
 
-	usageService := service.NewUsageService(db)
-	usageIdentityService := service.NewUsageIdentityService(db)
 	cpaClient := cpa.NewClient(cfg.CPABaseURL, cfg.CPAManagementKey, cfg.RequestTimeout, cfg.TLSSkipVerify)
 	if cfg.TLSSkipVerify {
 		logrus.WithField("cpa_base_url", cfg.CPABaseURL).Warn("TLS certificate verification is disabled for CPA and Redis queue connections")
 	}
+	usageService := service.NewUsageService(db, cpaClient)
+	usageIdentityService := service.NewUsageIdentityService(db)
 	pricingService := service.NewPricingService(db, cpaClient)
 	quotaService := quota.NewService(db, cpaClient)
 	sessionManager := auth.NewSessionManager(cfg.AuthSessionTTL)

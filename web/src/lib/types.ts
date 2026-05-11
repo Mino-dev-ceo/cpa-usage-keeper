@@ -296,6 +296,7 @@ export interface UsageAnalysisModel {
 export interface UsageAnalysisApi {
   api_key: string
   display_name: string
+  note?: string
   total_requests: number
   success_count: number
   failure_count: number

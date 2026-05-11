@@ -2,19 +2,36 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
+	"cpa-usage-keeper/internal/cpa/dto/response"
+	"cpa-usage-keeper/internal/redact"
 	"cpa-usage-keeper/internal/repository"
 	repodto "cpa-usage-keeper/internal/repository/dto"
 	servicedto "cpa-usage-keeper/internal/service/dto"
+
+	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
 
 type usageService struct {
-	db *gorm.DB
+	db                     *gorm.DB
+	externalAPIKeysFetcher externalAPIKeysFetcher
 }
 
-func NewUsageService(db *gorm.DB) UsageProvider {
-	return &usageService{db: db}
+const maxAPIKeyNoteLength = 80
+
+type externalAPIKeysFetcher interface {
+	FetchExternalAPIKeys(context.Context) (*response.ExternalAPIKeysResult, error)
+}
+
+func NewUsageService(db *gorm.DB, fetchers ...externalAPIKeysFetcher) UsageProvider {
+	var fetcher externalAPIKeysFetcher
+	if len(fetchers) > 0 {
+		fetcher = fetchers[0]
+	}
+	return &usageService{db: db, externalAPIKeysFetcher: fetcher}
 }
 
 func (s *usageService) GetUsageWithFilter(_ context.Context, filter servicedto.UsageFilter) (*repodto.StatisticsSnapshot, error) {
@@ -149,7 +166,7 @@ func (s *usageService) ListUsageEventFilterOptions(_ context.Context, filter ser
 }
 
 // Usage 页面里的 Analysis tab 只下传时间窗口，仓储层负责按 API 和 model 聚合。
-func (s *usageService) GetUsageAnalysis(_ context.Context, filter servicedto.UsageFilter) (*servicedto.UsageAnalysisSnapshot, error) {
+func (s *usageService) GetUsageAnalysis(ctx context.Context, filter servicedto.UsageFilter) (*servicedto.UsageAnalysisSnapshot, error) {
 	apiRows, modelRows, err := repository.ListUsageAnalysisWithFilter(s.db, repodto.UsageQueryFilter{
 		StartTime: filter.StartTime,
 		EndTime:   filter.EndTime,
@@ -158,7 +175,13 @@ func (s *usageService) GetUsageAnalysis(_ context.Context, filter servicedto.Usa
 		return nil, err
 	}
 
+	notes, err := s.apiKeyNoteMap()
+	if err != nil {
+		return nil, err
+	}
+
 	apis := make([]servicedto.UsageAnalysisAPIStat, 0, len(apiRows))
+	existingAPIAliases := make(map[string]struct{}, len(apiRows))
 	for _, row := range apiRows {
 		models := make([]servicedto.UsageAnalysisModelStat, 0, len(row.Models))
 		for _, model := range row.Models {
@@ -176,9 +199,11 @@ func (s *usageService) GetUsageAnalysis(_ context.Context, filter servicedto.Usa
 				LatencySampleCount: model.LatencySampleCount,
 			})
 		}
+		existingAPIAliases[redact.APIAlias(row.APIGroupKey)] = struct{}{}
 		apis = append(apis, servicedto.UsageAnalysisAPIStat{
 			APIKey:          row.APIGroupKey,
 			DisplayName:     row.DisplayName,
+			Note:            notes[redact.APIAlias(row.APIGroupKey)],
 			TotalRequests:   row.TotalRequests,
 			SuccessCount:    row.SuccessCount,
 			FailureCount:    row.FailureCount,
@@ -190,6 +215,7 @@ func (s *usageService) GetUsageAnalysis(_ context.Context, filter servicedto.Usa
 			Models:          models,
 		})
 	}
+	apis = append(apis, s.zeroUsageExternalAPIKeys(ctx, notes, existingAPIAliases)...)
 
 	models := make([]servicedto.UsageAnalysisModelStat, 0, len(modelRows))
 	for _, row := range modelRows {
@@ -209,4 +235,119 @@ func (s *usageService) GetUsageAnalysis(_ context.Context, filter servicedto.Usa
 	}
 
 	return &servicedto.UsageAnalysisSnapshot{APIs: apis, Models: models}, nil
+}
+
+func (s *usageService) zeroUsageExternalAPIKeys(ctx context.Context, notes map[string]string, existingAliases map[string]struct{}) []servicedto.UsageAnalysisAPIStat {
+	if s.externalAPIKeysFetcher == nil {
+		return nil
+	}
+	result, err := s.externalAPIKeysFetcher.FetchExternalAPIKeys(ctx)
+	if err != nil {
+		logrus.WithError(err).Warn("failed to sync external api keys for usage analysis")
+		return nil
+	}
+	if result == nil {
+		return nil
+	}
+
+	rows := make([]servicedto.UsageAnalysisAPIStat, 0, len(result.Payload.ExternalAPIKeys))
+	for _, value := range result.Payload.ExternalAPIKeys {
+		apiKey := strings.TrimSpace(value)
+		if apiKey == "" {
+			continue
+		}
+		alias := redact.APIAlias(apiKey)
+		if _, ok := existingAliases[alias]; ok {
+			continue
+		}
+		existingAliases[alias] = struct{}{}
+		rows = append(rows, servicedto.UsageAnalysisAPIStat{
+			APIKey:      apiKey,
+			DisplayName: apiKey,
+			Note:        notes[alias],
+			Models:      []servicedto.UsageAnalysisModelStat{},
+		})
+	}
+	return rows
+}
+
+func (s *usageService) ListAPIKeyNotes(context.Context) ([]servicedto.APIKeyNote, error) {
+	notes, err := repository.ListAPIKeyNotes(s.db)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]servicedto.APIKeyNote, 0, len(notes))
+	for _, note := range notes {
+		result = append(result, servicedto.APIKeyNote{
+			APIAlias: note.APIAlias,
+			Note:     note.Note,
+		})
+	}
+	return result, nil
+}
+
+func (s *usageService) UpsertAPIKeyNote(_ context.Context, apiAlias string, note string) (servicedto.APIKeyNote, error) {
+	normalizedAlias, err := normalizeAPIKeyNoteAlias(apiAlias)
+	if err != nil {
+		return servicedto.APIKeyNote{}, err
+	}
+	normalizedNote, err := normalizeAPIKeyNoteText(note)
+	if err != nil {
+		return servicedto.APIKeyNote{}, err
+	}
+	if normalizedNote == "" {
+		if err := repository.DeleteAPIKeyNote(s.db, normalizedAlias); err != nil {
+			return servicedto.APIKeyNote{}, err
+		}
+		return servicedto.APIKeyNote{APIAlias: normalizedAlias, Note: ""}, nil
+	}
+	saved, err := repository.UpsertAPIKeyNote(s.db, normalizedAlias, normalizedNote)
+	if err != nil {
+		return servicedto.APIKeyNote{}, err
+	}
+	return servicedto.APIKeyNote{APIAlias: saved.APIAlias, Note: saved.Note}, nil
+}
+
+func (s *usageService) DeleteAPIKeyNote(_ context.Context, apiAlias string) error {
+	normalizedAlias, err := normalizeAPIKeyNoteAlias(apiAlias)
+	if err != nil {
+		return err
+	}
+	return repository.DeleteAPIKeyNote(s.db, normalizedAlias)
+}
+
+func (s *usageService) apiKeyNoteMap() (map[string]string, error) {
+	notes, err := repository.ListAPIKeyNotes(s.db)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]string, len(notes))
+	for _, note := range notes {
+		if alias := strings.TrimSpace(note.APIAlias); alias != "" {
+			result[alias] = strings.TrimSpace(note.Note)
+		}
+	}
+	return result, nil
+}
+
+func normalizeAPIKeyNoteAlias(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || trimmed == "unknown" {
+		return "", fmt.Errorf("api key alias is required")
+	}
+	if !strings.HasPrefix(trimmed, "redacted_api_") {
+		return "", fmt.Errorf("invalid api key alias")
+	}
+	if len(trimmed) > 128 {
+		return "", fmt.Errorf("api key alias is too long")
+	}
+	return trimmed, nil
+}
+
+func normalizeAPIKeyNoteText(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if len([]rune(trimmed)) > maxAPIKeyNoteLength {
+		return "", fmt.Errorf("note is too long; max %d characters", maxAPIKeyNoteLength)
+	}
+	return trimmed, nil
 }

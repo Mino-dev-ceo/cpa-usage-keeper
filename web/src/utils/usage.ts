@@ -63,6 +63,8 @@ export interface ApiStatsModelSummary {
 export interface ApiStats {
   endpoint: string;
   displayName: string;
+  keyDisplayName: string;
+  note?: string;
   totalRequests: number;
   successCount: number;
   failureCount: number;
@@ -495,9 +497,11 @@ export function getApiStats(usage: UsagePayload | null, modelPrices: Record<stri
           totalCost += calculateCost({ ...detail, __modelName: modelName }, modelPrices);
         });
       });
+      const displayName = String(api.display_name ?? endpoint).trim() || endpoint;
       return {
         endpoint,
-        displayName: String(api.display_name ?? endpoint).trim() || endpoint,
+        displayName,
+        keyDisplayName: displayName,
         totalRequests: toNumber(api.total_requests),
         successCount: toNumber(api.success_count),
         failureCount: toNumber(api.failure_count),
