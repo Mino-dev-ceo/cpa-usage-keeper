@@ -77,6 +77,10 @@ func (c *Client) doManagementJSONRequest(ctx context.Context, path string, targe
 }
 
 func (c *Client) doManagementJSONPostRequest(ctx context.Context, path string, requestBody any, target any, kind string) (int, []byte, error) {
+	return c.doManagementJSONRequestWithBody(ctx, http.MethodPost, path, requestBody, target, kind)
+}
+
+func (c *Client) doManagementJSONRequestWithBody(ctx context.Context, method string, path string, requestBody any, target any, kind string) (int, []byte, error) {
 	if c == nil {
 		return 0, nil, fmt.Errorf("cpa client is nil")
 	}
@@ -87,9 +91,21 @@ func (c *Client) doManagementJSONPostRequest(ctx context.Context, path string, r
 	if err != nil {
 		return 0, nil, fmt.Errorf("encode management %s json: %w", kind, err)
 	}
-	return c.doJSONRequestWithBody(ctx, http.MethodPost, path, body, target, "management "+kind, func(req *http.Request) {
+	return c.doJSONRequestWithBody(ctx, method, path, body, target, "management "+kind, func(req *http.Request) {
 		req.Header.Set("Authorization", "Bearer "+c.managementKey)
 		req.Header.Set("Content-Type", "application/json")
+	})
+}
+
+func (c *Client) doManagementJSONMethodRequest(ctx context.Context, method string, path string, target any, kind string) (int, []byte, error) {
+	if c == nil {
+		return 0, nil, fmt.Errorf("cpa client is nil")
+	}
+	if c.managementKey == "" {
+		return 0, nil, fmt.Errorf("cpa management key is required")
+	}
+	return c.doJSONRequestWithBody(ctx, method, path, nil, target, "management "+kind, func(req *http.Request) {
+		req.Header.Set("Authorization", "Bearer "+c.managementKey)
 	})
 }
 
@@ -164,6 +180,53 @@ func (c *Client) FetchAuthFiles(ctx context.Context) (*response.AuthFilesResult,
 	result.Body = body
 	if err != nil {
 		return result, err
+	}
+	return result, nil
+}
+
+func (c *Client) PatchAuthFileStatus(ctx context.Context, name string, disabled bool) (*response.AuthFileStatusResult, error) {
+	result := &response.AuthFileStatusResult{}
+	trimmedName := strings.TrimSpace(name)
+	if trimmedName == "" {
+		return result, fmt.Errorf("auth file name is required")
+	}
+	request := struct {
+		Name     string `json:"name"`
+		Disabled bool   `json:"disabled"`
+	}{
+		Name:     trimmedName,
+		Disabled: disabled,
+	}
+	statusCode, body, err := c.doManagementJSONRequestWithBody(ctx, http.MethodPatch, cpaManagementAuthFilesStatusEndpoint, request, &result.Payload, "auth file status")
+	result.StatusCode = statusCode
+	result.Body = body
+	if err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+func (c *Client) DeleteAuthFiles(ctx context.Context, names []string) (*response.AuthFilesDeleteResult, error) {
+	result := &response.AuthFilesDeleteResult{}
+	cleanNames := normalizedAuthFileNames(names)
+	if len(cleanNames) == 0 {
+		return result, fmt.Errorf("auth file names are required")
+	}
+
+	values := url.Values{}
+	for _, name := range cleanNames {
+		values.Add("name", name)
+	}
+	queryPath := cpaManagementAuthFilesEndpoint + "?" + values.Encode()
+	statusCode, body, err := c.doManagementJSONMethodRequest(ctx, http.MethodDelete, queryPath, &result.Payload, "delete auth files")
+	result.StatusCode = statusCode
+	result.Body = body
+	if err != nil {
+		return result, err
+	}
+	if len(cleanNames) == 1 && result.Payload.Deleted == 0 && len(result.Payload.Files) == 0 && len(result.Payload.Failed) == 0 {
+		result.Payload.Deleted = 1
+		result.Payload.Files = cleanNames
 	}
 	return result, nil
 }
@@ -273,4 +336,21 @@ func firstNonEmptyString(values []string) string {
 		}
 	}
 	return ""
+}
+
+func normalizedAuthFileNames(names []string) []string {
+	normalized := make([]string, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		normalized = append(normalized, trimmed)
+	}
+	return normalized
 }

@@ -1415,10 +1415,15 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
                     loading={credentialsData.loading}
                     quotaRefreshing={credentialsData.quotaRefreshing}
                     quotaRefreshError={credentialsData.quotaRefreshError}
+                    cleanupLoading={credentialsData.cleanupLoading}
+                    cleanupError={credentialsData.cleanupError}
+                    cleanupResult={credentialsData.cleanupResult}
                     onPageChange={credentialsData.setAuthFilePage}
                     onPageSizeChange={credentialsData.setAuthFilePageSize}
                     onRefreshQuota={credentialsData.refreshQuotaForCurrentAuthFilePage}
                     onRefreshQuotaForAuthIndex={credentialsData.refreshQuotaForAuthIndex}
+                    onCleanupBanned={credentialsData.cleanupBannedAuthFiles}
+                    onClearCleanupResult={credentialsData.clearCleanupResult}
                   />
                   <AiProviderCredentialsSection
                     rows={credentialsData.aiProviderRows}

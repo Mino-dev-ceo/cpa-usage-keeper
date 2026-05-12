@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"cpa-usage-keeper/internal/guard"
 	"cpa-usage-keeper/internal/poller"
 	"cpa-usage-keeper/internal/quota"
 	"cpa-usage-keeper/internal/service"
@@ -56,9 +57,14 @@ type QuotaProvider interface {
 	GetRefreshTask(context.Context, string) (quota.RefreshTaskResponse, error)
 }
 
+type AccountGuardProvider interface {
+	CleanupBanned(context.Context, bool) (guard.CleanupResult, error)
+}
+
 type OptionalProviders struct {
 	UsageIdentity service.UsageIdentityProvider
 	Quota         QuotaProvider
+	AccountGuard  AccountGuardProvider
 }
 
 type syncUserMessageError interface {
@@ -95,9 +101,11 @@ func NewRouter(
 
 	var usageIdentityProvider service.UsageIdentityProvider
 	var quotaProvider QuotaProvider
+	var accountGuardProvider AccountGuardProvider
 	if len(optionalProviders) > 0 {
 		usageIdentityProvider = optionalProviders[0].UsageIdentity
 		quotaProvider = optionalProviders[0].Quota
+		accountGuardProvider = optionalProviders[0].AccountGuard
 	}
 
 	protected := apiV1.Group("")
@@ -112,6 +120,7 @@ func NewRouter(
 	registerUsageIdentityRoutes(protected, usageIdentityProvider)
 	registerPricingRoutes(protected, pricingProvider)
 	registerQuotaRoutes(protected, quotaProvider)
+	registerAccountGuardRoutes(protected, accountGuardProvider)
 
 	if staticFS != nil {
 		if indexFile, err := staticFS.Open("index.html"); err == nil {

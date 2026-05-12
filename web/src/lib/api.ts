@@ -1,4 +1,4 @@
-import { USAGE_QUOTA_REFRESH_LIMIT, type AuthSessionResponse, type PricingEntry, type PricingResponse, type StatusResponse, type UpdateCheckResponse, type UsageAnalysisResponse, type UsageEventModelFilterOptionsResponse, type UsageEventSourceFilterOptionsResponse, type UsedModelsResponse, type UsageIdentitiesPageResponse, type UsageIdentitiesResponse, type UsageEventsResponse, type UsageIdentityAuthType, type UsageOverviewResponse, type UsageQuotaCacheResponse, type UsageQuotaCheckResponse, type UsageQuotaRefreshResponse, type UsageQuotaRefreshTaskResponse } from './types'
+import { USAGE_QUOTA_REFRESH_LIMIT, type AccountGuardCleanupResponse, type AuthSessionResponse, type PricingEntry, type PricingResponse, type StatusResponse, type UpdateCheckResponse, type UsageAnalysisResponse, type UsageEventModelFilterOptionsResponse, type UsageEventSourceFilterOptionsResponse, type UsedModelsResponse, type UsageIdentitiesPageResponse, type UsageIdentitiesResponse, type UsageEventsResponse, type UsageIdentityAuthType, type UsageOverviewResponse, type UsageQuotaCacheResponse, type UsageQuotaCheckResponse, type UsageQuotaRefreshResponse, type UsageQuotaRefreshTaskResponse } from './types'
 
 export class ApiError extends Error {
   status: number
@@ -232,6 +232,21 @@ export async function fetchUsageQuotaRefreshTask(taskId: string, signal?: AbortS
   const response = await apiFetch(apiPath(`/quota/refresh/${encodeURIComponent(taskId)}`), { signal })
   if (!response.ok) {
     await parseApiError(response, `Failed to load usage quota refresh task: ${response.status}`)
+  }
+  return response.json()
+}
+
+export async function cleanupBannedAuthFiles(dryRun = true, signal?: AbortSignal): Promise<AccountGuardCleanupResponse> {
+  const response = await apiFetch(apiPath('/account-guard/cleanup-banned'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ dry_run: dryRun }),
+    signal,
+  })
+  if (!response.ok) {
+    await parseApiError(response, `Failed to cleanup banned auth files: ${response.status}`)
   }
   return response.json()
 }

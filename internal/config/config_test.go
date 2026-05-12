@@ -16,6 +16,9 @@ var configEnvKeys = []string{
 	"SQLITE_PATH", "BACKUP_ENABLED", "BACKUP_DIR", "BACKUP_INTERVAL", "BACKUP_RETENTION_DAYS",
 	"REQUEST_TIMEOUT", "LOG_LEVEL", "LOG_FILE_ENABLED", "LOG_DIR", "LOG_RETENTION_DAYS",
 	"AUTH_ENABLED", "LOGIN_PASSWORD", "AUTH_SESSION_TTL", "TZ", "TLS_SKIP_VERIFY",
+	"ACCOUNT_GUARD_ENABLED", "ACCOUNT_GUARD_INTERVAL", "ACCOUNT_GUARD_USAGE_THRESHOLD", "ACCOUNT_GUARD_WEEKLY_TOKEN_LIMIT",
+	"ACCOUNT_GUARD_PROVIDER_QUOTA_ENABLED", "ACCOUNT_GUARD_DRY_RUN", "ACCOUNT_GUARD_AUTO_REENABLE", "ACCOUNT_GUARD_RESET_WEEKDAY", "ACCOUNT_GUARD_RESET_HOUR",
+	"ACCOUNT_GUARD_REMOVE_BANNED_ENABLED", "ACCOUNT_GUARD_REMOVE_BANNED_DRY_RUN", "ACCOUNT_GUARD_REMOVE_BANNED_STATUS_MESSAGES",
 }
 
 func TestMain(m *testing.M) {
@@ -158,6 +161,39 @@ func TestLoadFromEnvAppliesDefaults(t *testing.T) {
 	}
 	if cfg.LogRetentionDays != 7 {
 		t.Fatalf("expected default log retention 7 days, got %d", cfg.LogRetentionDays)
+	}
+	if cfg.AccountGuardEnabled {
+		t.Fatal("expected account guard to be disabled by default")
+	}
+	if cfg.AccountGuardInterval != AccountGuardIntervalDefault {
+		t.Fatalf("expected default account guard interval %s, got %s", AccountGuardIntervalDefault, cfg.AccountGuardInterval)
+	}
+	if cfg.AccountGuardUsageThreshold != 0.8 {
+		t.Fatalf("expected default account guard usage threshold 0.8, got %f", cfg.AccountGuardUsageThreshold)
+	}
+	if cfg.AccountGuardWeeklyTokenLimit != 0 {
+		t.Fatalf("expected default account guard weekly token limit 0, got %d", cfg.AccountGuardWeeklyTokenLimit)
+	}
+	if !cfg.AccountGuardProviderQuotaEnabled {
+		t.Fatal("expected account guard provider quota to be enabled by default")
+	}
+	if !cfg.AccountGuardDryRun {
+		t.Fatal("expected account guard dry run to be enabled by default")
+	}
+	if !cfg.AccountGuardAutoReenable {
+		t.Fatal("expected account guard auto reenable to be enabled by default")
+	}
+	if cfg.AccountGuardResetWeekday != time.Monday || cfg.AccountGuardResetHour != 0 {
+		t.Fatalf("expected default account guard reset Monday 00:00, got %s %d", cfg.AccountGuardResetWeekday, cfg.AccountGuardResetHour)
+	}
+	if cfg.AccountGuardRemoveBannedEnabled {
+		t.Fatal("expected banned cleanup to be disabled by default")
+	}
+	if !cfg.AccountGuardRemoveBannedDryRun {
+		t.Fatal("expected banned cleanup dry run to be enabled by default")
+	}
+	if strings.Join(cfg.AccountGuardRemoveBannedStatusMessages, ",") != "unauthorized,payment_required,not_found" {
+		t.Fatalf("unexpected default banned cleanup messages: %#v", cfg.AccountGuardRemoveBannedStatusMessages)
 	}
 }
 
@@ -443,6 +479,18 @@ func TestLoadFromEnvParsesOverrides(t *testing.T) {
 	t.Setenv("REDIS_QUEUE_IDLE_INTERVAL", "2s")
 	t.Setenv("TLS_SKIP_VERIFY", "true")
 	t.Setenv("REDIS_QUEUE_TLS", "true")
+	t.Setenv("ACCOUNT_GUARD_ENABLED", "true")
+	t.Setenv("ACCOUNT_GUARD_INTERVAL", "10m")
+	t.Setenv("ACCOUNT_GUARD_USAGE_THRESHOLD", "0.75")
+	t.Setenv("ACCOUNT_GUARD_WEEKLY_TOKEN_LIMIT", "123456")
+	t.Setenv("ACCOUNT_GUARD_PROVIDER_QUOTA_ENABLED", "false")
+	t.Setenv("ACCOUNT_GUARD_DRY_RUN", "false")
+	t.Setenv("ACCOUNT_GUARD_AUTO_REENABLE", "false")
+	t.Setenv("ACCOUNT_GUARD_RESET_WEEKDAY", "Sunday")
+	t.Setenv("ACCOUNT_GUARD_RESET_HOUR", "8")
+	t.Setenv("ACCOUNT_GUARD_REMOVE_BANNED_ENABLED", "true")
+	t.Setenv("ACCOUNT_GUARD_REMOVE_BANNED_DRY_RUN", "false")
+	t.Setenv("ACCOUNT_GUARD_REMOVE_BANNED_STATUS_MESSAGES", " unauthorized, payment_required, unauthorized ")
 
 	cfg, err := LoadFromEnv()
 	if err != nil {
@@ -457,6 +505,9 @@ func TestLoadFromEnvParsesOverrides(t *testing.T) {
 	}
 	if cfg.AppPort != "9090" || cfg.AppBasePath != "/cpa" || cfg.WorkDir != "/tmp/work" || cfg.SQLitePath != filepath.Join("/tmp/work", "app.db") || cfg.BackupEnabled || cfg.BackupDir != filepath.Join("/tmp/work", "backups") || cfg.BackupInterval != 2*time.Hour || cfg.BackupRetentionDays != 7 || cfg.RequestTimeout != 15*time.Second || cfg.LogLevel != "debug" || cfg.LogFileEnabled || cfg.LogDir != filepath.Join("/tmp/work", "logs") || cfg.LogRetentionDays != 14 || !cfg.AuthEnabled || cfg.LoginPassword != "top-secret" || cfg.AuthSessionTTL != 12*time.Hour || cfg.RedisQueueIdleInterval != 2*time.Second {
 		t.Fatalf("unexpected config override result: %+v", cfg)
+	}
+	if !cfg.AccountGuardEnabled || cfg.AccountGuardInterval != 10*time.Minute || cfg.AccountGuardUsageThreshold != 0.75 || cfg.AccountGuardWeeklyTokenLimit != 123456 || cfg.AccountGuardProviderQuotaEnabled || cfg.AccountGuardDryRun || cfg.AccountGuardAutoReenable || cfg.AccountGuardResetWeekday != time.Sunday || cfg.AccountGuardResetHour != 8 || !cfg.AccountGuardRemoveBannedEnabled || cfg.AccountGuardRemoveBannedDryRun || strings.Join(cfg.AccountGuardRemoveBannedStatusMessages, ",") != "unauthorized,payment_required" {
+		t.Fatalf("unexpected account guard override result: %+v", cfg)
 	}
 }
 
@@ -505,6 +556,34 @@ func TestLoadFromEnvRejectsNonPositiveRedisQueueIdleInterval(t *testing.T) {
 	_, err := LoadFromEnv()
 	if err == nil || err.Error() != "REDIS_QUEUE_IDLE_INTERVAL must be positive" {
 		t.Fatalf("expected REDIS_QUEUE_IDLE_INTERVAL validation error, got %v", err)
+	}
+}
+
+func TestLoadFromEnvRejectsInvalidAccountGuardConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		key     string
+		value   string
+		message string
+	}{
+		{name: "interval", key: "ACCOUNT_GUARD_INTERVAL", value: "0s", message: "ACCOUNT_GUARD_INTERVAL must be positive"},
+		{name: "threshold zero", key: "ACCOUNT_GUARD_USAGE_THRESHOLD", value: "0", message: "ACCOUNT_GUARD_USAGE_THRESHOLD must be greater than 0 and less than or equal to 1"},
+		{name: "threshold high", key: "ACCOUNT_GUARD_USAGE_THRESHOLD", value: "1.2", message: "ACCOUNT_GUARD_USAGE_THRESHOLD must be greater than 0 and less than or equal to 1"},
+		{name: "negative weekly limit", key: "ACCOUNT_GUARD_WEEKLY_TOKEN_LIMIT", value: "-1", message: "ACCOUNT_GUARD_WEEKLY_TOKEN_LIMIT must be non-negative"},
+		{name: "weekday", key: "ACCOUNT_GUARD_RESET_WEEKDAY", value: "Funday", message: "ACCOUNT_GUARD_RESET_WEEKDAY is invalid"},
+		{name: "hour", key: "ACCOUNT_GUARD_RESET_HOUR", value: "24", message: "ACCOUNT_GUARD_RESET_HOUR must be between 0 and 23"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CPA_BASE_URL", "http://127.0.0.1:"+cpa.ManagementRedisDefaultPort)
+			t.Setenv("CPA_MANAGEMENT_KEY", "secret")
+			t.Setenv(tc.key, tc.value)
+
+			_, err := LoadFromEnv()
+			if err == nil || !strings.Contains(err.Error(), tc.message) {
+				t.Fatalf("expected %q validation error, got %v", tc.message, err)
+			}
+		})
 	}
 }
 

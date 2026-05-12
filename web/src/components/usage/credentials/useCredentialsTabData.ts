@@ -1,4 +1,6 @@
-import { useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
+import { ApiError, cleanupBannedAuthFiles } from '@/lib/api'
+import type { AccountGuardCleanupResponse } from '@/lib/types'
 import {
   buildAiProviderCredentialRows,
   buildAuthFileCredentialRows,
@@ -34,14 +36,22 @@ export interface CredentialsTabData {
   error: string
   quotaRefreshing: boolean
   quotaRefreshError: string
+  cleanupLoading: boolean
+  cleanupError: string
+  cleanupResult?: AccountGuardCleanupResponse
   refresh: () => Promise<void>
   refreshQuotaForCurrentAuthFilePage: () => Promise<void>
   refreshQuotaForAuthIndex: (authIndex: string) => Promise<void>
+  cleanupBannedAuthFiles: (dryRun?: boolean) => Promise<AccountGuardCleanupResponse | undefined>
+  clearCleanupResult: () => void
 }
 
 export function useCredentialsTabData({ enabled, onAuthRequired }: UseCredentialsTabDataOptions): CredentialsTabData {
   // 页面 hook 只编排分页、缓存和刷新任务三层数据，不直接发散 API 调用。
   const credentialPages = useCredentialPages({ enabled, onAuthRequired })
+  const [cleanupLoading, setCleanupLoading] = useState(false)
+  const [cleanupError, setCleanupError] = useState('')
+  const [cleanupResult, setCleanupResult] = useState<AccountGuardCleanupResponse | undefined>()
   const currentAuthIndexes = useMemo(
     // quota 只对当前 Auth Files 页生效，AI Provider 不参与缓存读取和刷新。
     () => selectQuotaEligibleAuthIndexes(credentialPages.authFileIdentities),
@@ -77,6 +87,34 @@ export function useCredentialsTabData({ enabled, onAuthRequired }: UseCredential
     [credentialPages.aiProviderIdentities],
   )
 
+  const runCleanupBannedAuthFiles = useCallback(async (dryRun = true) => {
+    setCleanupLoading(true)
+    setCleanupError('')
+    try {
+      const result = await cleanupBannedAuthFiles(dryRun)
+      setCleanupResult(result)
+      if (!dryRun) {
+        await credentialPages.refresh()
+      }
+      return result
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        onAuthRequired?.()
+        return undefined
+      }
+      const message = error instanceof Error ? error.message : 'Failed to cleanup banned auth files'
+      setCleanupError(message)
+      return undefined
+    } finally {
+      setCleanupLoading(false)
+    }
+  }, [credentialPages.refresh, onAuthRequired])
+
+  const clearCleanupResult = useCallback(() => {
+    setCleanupResult(undefined)
+    setCleanupError('')
+  }, [])
+
   return {
     authFileRows,
     aiProviderRows,
@@ -96,9 +134,14 @@ export function useCredentialsTabData({ enabled, onAuthRequired }: UseCredential
     error: credentialPages.error,
     quotaRefreshing: quotaRefreshTasks.quotaRefreshing,
     quotaRefreshError: quotaRefreshTasks.quotaRefreshError,
+    cleanupLoading,
+    cleanupError,
+    cleanupResult,
     refresh: credentialPages.refresh,
     refreshQuotaForCurrentAuthFilePage: quotaRefreshTasks.refreshQuotaForCurrentAuthFilePage,
     refreshQuotaForAuthIndex: quotaRefreshTasks.refreshQuotaForAuthIndex,
+    cleanupBannedAuthFiles: runCleanupBannedAuthFiles,
+    clearCleanupResult,
   }
 }
 

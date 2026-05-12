@@ -30,6 +30,20 @@ type AuthFilesResult struct {
 	Payload    authfiles.AuthFilesResponse
 }
 
+// AuthFileStatusResult 是 PatchAuthFileStatus 返回的 HTTP 包装。
+type AuthFileStatusResult struct {
+	StatusCode int
+	Body       []byte
+	Payload    authfiles.AuthFileStatusResponse
+}
+
+// AuthFilesDeleteResult 是 DeleteAuthFiles 返回的 HTTP 包装。
+type AuthFilesDeleteResult struct {
+	StatusCode int
+	Body       []byte
+	Payload    authfiles.AuthFilesDeleteResponse
+}
+
 // UsageQueueResult 是 FetchUsageQueue 返回的 HTTP 包装，payload 保留为 raw JSON 供 Redis usage 解码流程处理。
 type UsageQueueResult struct {
 	StatusCode int

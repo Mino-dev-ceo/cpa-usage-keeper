@@ -19,6 +19,7 @@ const (
 	RedisQueueKeyDefault          = cpa.ManagementUsageQueueKey
 	RedisQueueErrorBackoffDefault = 10 * time.Second
 	MetadataSyncIntervalDefault   = 30 * time.Second
+	AccountGuardIntervalDefault   = 5 * time.Minute
 )
 
 var (
@@ -84,6 +85,30 @@ type Config struct {
 	LoginPassword string
 	// AuthSessionTTL 是登录 session 有效时长。
 	AuthSessionTTL time.Duration
+	// AccountGuardEnabled 控制是否启用按本地 usage 阈值自动禁用 auth file。
+	AccountGuardEnabled bool
+	// AccountGuardInterval 是账号守护任务的巡检间隔。
+	AccountGuardInterval time.Duration
+	// AccountGuardUsageThreshold 是本地周用量达到多少比例时触发禁用，例如 0.8。
+	AccountGuardUsageThreshold float64
+	// AccountGuardWeeklyTokenLimit 是单个 auth file 每周允许的总 token 基线。
+	AccountGuardWeeklyTokenLimit int64
+	// AccountGuardProviderQuotaEnabled 控制是否优先使用上游真实 quota 百分比。
+	AccountGuardProviderQuotaEnabled bool
+	// AccountGuardDryRun 为 true 时只记录日志和结果，不真正禁用账号。
+	AccountGuardDryRun bool
+	// AccountGuardAutoReenable 控制周窗口重置后是否自动重新启用由守护任务禁用的账号。
+	AccountGuardAutoReenable bool
+	// AccountGuardResetWeekday 是周窗口重置星期。
+	AccountGuardResetWeekday time.Weekday
+	// AccountGuardResetHour 是周窗口重置小时，使用项目本地时区。
+	AccountGuardResetHour int
+	// AccountGuardRemoveBannedEnabled 控制是否启用批量移除真正不可用账号。
+	AccountGuardRemoveBannedEnabled bool
+	// AccountGuardRemoveBannedDryRun 为 true 时只预览候选账号，不真正删除。
+	AccountGuardRemoveBannedDryRun bool
+	// AccountGuardRemoveBannedStatusMessages 是可判定为封禁/不可用的状态消息片段。
+	AccountGuardRemoveBannedStatusMessages []string
 }
 
 type LoadOptions struct {
@@ -188,6 +213,64 @@ func Load(options LoadOptions) (*Config, error) {
 		return nil, err
 	}
 
+	accountGuardEnabled, err := getBool("ACCOUNT_GUARD_ENABLED", false)
+	if err != nil {
+		return nil, err
+	}
+	accountGuardInterval, err := getDuration("ACCOUNT_GUARD_INTERVAL", AccountGuardIntervalDefault)
+	if err != nil {
+		return nil, err
+	}
+	if accountGuardInterval <= 0 {
+		return nil, fmt.Errorf("ACCOUNT_GUARD_INTERVAL must be positive")
+	}
+	accountGuardUsageThreshold, err := getFloat("ACCOUNT_GUARD_USAGE_THRESHOLD", 0.8)
+	if err != nil {
+		return nil, err
+	}
+	if accountGuardUsageThreshold <= 0 || accountGuardUsageThreshold > 1 {
+		return nil, fmt.Errorf("ACCOUNT_GUARD_USAGE_THRESHOLD must be greater than 0 and less than or equal to 1")
+	}
+	accountGuardWeeklyTokenLimit, err := getInt64("ACCOUNT_GUARD_WEEKLY_TOKEN_LIMIT", 0)
+	if err != nil {
+		return nil, err
+	}
+	if accountGuardWeeklyTokenLimit < 0 {
+		return nil, fmt.Errorf("ACCOUNT_GUARD_WEEKLY_TOKEN_LIMIT must be non-negative")
+	}
+	accountGuardProviderQuotaEnabled, err := getBool("ACCOUNT_GUARD_PROVIDER_QUOTA_ENABLED", true)
+	if err != nil {
+		return nil, err
+	}
+	accountGuardDryRun, err := getBool("ACCOUNT_GUARD_DRY_RUN", true)
+	if err != nil {
+		return nil, err
+	}
+	accountGuardAutoReenable, err := getBool("ACCOUNT_GUARD_AUTO_REENABLE", true)
+	if err != nil {
+		return nil, err
+	}
+	accountGuardResetWeekday, err := parseWeekday(getString("ACCOUNT_GUARD_RESET_WEEKDAY", "Monday"))
+	if err != nil {
+		return nil, fmt.Errorf("ACCOUNT_GUARD_RESET_WEEKDAY is invalid: %w", err)
+	}
+	accountGuardResetHour, err := getInt("ACCOUNT_GUARD_RESET_HOUR", 0)
+	if err != nil {
+		return nil, err
+	}
+	if accountGuardResetHour < 0 || accountGuardResetHour > 23 {
+		return nil, fmt.Errorf("ACCOUNT_GUARD_RESET_HOUR must be between 0 and 23")
+	}
+	accountGuardRemoveBannedEnabled, err := getBool("ACCOUNT_GUARD_REMOVE_BANNED_ENABLED", false)
+	if err != nil {
+		return nil, err
+	}
+	accountGuardRemoveBannedDryRun, err := getBool("ACCOUNT_GUARD_REMOVE_BANNED_DRY_RUN", true)
+	if err != nil {
+		return nil, err
+	}
+	accountGuardRemoveBannedStatusMessages := getStringList("ACCOUNT_GUARD_REMOVE_BANNED_STATUS_MESSAGES", []string{"unauthorized", "payment_required", "not_found"})
+
 	appBasePath, err := normalizeBasePath(strings.TrimSpace(os.Getenv("APP_BASE_PATH")))
 	if err != nil {
 		return nil, fmt.Errorf("APP_BASE_PATH is invalid: %w", err)
@@ -196,32 +279,44 @@ func Load(options LoadOptions) (*Config, error) {
 	workDir := getString("WORK_DIR", DefaultWorkDir)
 
 	cfg := &Config{
-		AppPort:                getString("APP_PORT", "8080"),
-		AppBasePath:            appBasePath,
-		CPABaseURL:             strings.TrimSpace(os.Getenv("CPA_BASE_URL")),
-		CPAManagementKey:       strings.TrimSpace(os.Getenv("CPA_MANAGEMENT_KEY")),
-		RedisQueueAddr:         strings.TrimSpace(os.Getenv("REDIS_QUEUE_ADDR")),
-		RedisQueueTLS:          redisQueueTLS,
-		RedisQueueKey:          RedisQueueKeyDefault,
-		RedisQueueBatchSize:    redisQueueBatchSize,
-		RedisQueueIdleInterval: redisQueueIdleInterval,
-		RedisQueueErrorBackoff: RedisQueueErrorBackoffDefault,
-		MetadataSyncInterval:   MetadataSyncIntervalDefault,
-		WorkDir:                workDir,
-		SQLitePath:             filepath.Join(workDir, workDirDatabaseName),
-		BackupEnabled:          backupEnabled,
-		BackupDir:              filepath.Join(workDir, workDirBackupsName),
-		BackupInterval:         backupInterval,
-		BackupRetentionDays:    backupRetentionDays,
-		RequestTimeout:         requestTimeout,
-		TLSSkipVerify:          tlsSkipVerify,
-		LogLevel:               getString("LOG_LEVEL", "info"),
-		LogFileEnabled:         logFileEnabled,
-		LogDir:                 filepath.Join(workDir, workDirLogsName),
-		LogRetentionDays:       logRetentionDays,
-		AuthEnabled:            authEnabled,
-		LoginPassword:          strings.TrimSpace(os.Getenv("LOGIN_PASSWORD")),
-		AuthSessionTTL:         authSessionTTL,
+		AppPort:                                getString("APP_PORT", "8080"),
+		AppBasePath:                            appBasePath,
+		CPABaseURL:                             strings.TrimSpace(os.Getenv("CPA_BASE_URL")),
+		CPAManagementKey:                       strings.TrimSpace(os.Getenv("CPA_MANAGEMENT_KEY")),
+		RedisQueueAddr:                         strings.TrimSpace(os.Getenv("REDIS_QUEUE_ADDR")),
+		RedisQueueTLS:                          redisQueueTLS,
+		RedisQueueKey:                          RedisQueueKeyDefault,
+		RedisQueueBatchSize:                    redisQueueBatchSize,
+		RedisQueueIdleInterval:                 redisQueueIdleInterval,
+		RedisQueueErrorBackoff:                 RedisQueueErrorBackoffDefault,
+		MetadataSyncInterval:                   MetadataSyncIntervalDefault,
+		WorkDir:                                workDir,
+		SQLitePath:                             filepath.Join(workDir, workDirDatabaseName),
+		BackupEnabled:                          backupEnabled,
+		BackupDir:                              filepath.Join(workDir, workDirBackupsName),
+		BackupInterval:                         backupInterval,
+		BackupRetentionDays:                    backupRetentionDays,
+		RequestTimeout:                         requestTimeout,
+		TLSSkipVerify:                          tlsSkipVerify,
+		LogLevel:                               getString("LOG_LEVEL", "info"),
+		LogFileEnabled:                         logFileEnabled,
+		LogDir:                                 filepath.Join(workDir, workDirLogsName),
+		LogRetentionDays:                       logRetentionDays,
+		AuthEnabled:                            authEnabled,
+		LoginPassword:                          strings.TrimSpace(os.Getenv("LOGIN_PASSWORD")),
+		AuthSessionTTL:                         authSessionTTL,
+		AccountGuardEnabled:                    accountGuardEnabled,
+		AccountGuardInterval:                   accountGuardInterval,
+		AccountGuardUsageThreshold:             accountGuardUsageThreshold,
+		AccountGuardWeeklyTokenLimit:           accountGuardWeeklyTokenLimit,
+		AccountGuardProviderQuotaEnabled:       accountGuardProviderQuotaEnabled,
+		AccountGuardDryRun:                     accountGuardDryRun,
+		AccountGuardAutoReenable:               accountGuardAutoReenable,
+		AccountGuardResetWeekday:               accountGuardResetWeekday,
+		AccountGuardResetHour:                  accountGuardResetHour,
+		AccountGuardRemoveBannedEnabled:        accountGuardRemoveBannedEnabled,
+		AccountGuardRemoveBannedDryRun:         accountGuardRemoveBannedDryRun,
+		AccountGuardRemoveBannedStatusMessages: accountGuardRemoveBannedStatusMessages,
 	}
 	if cfg.CPABaseURL == "" {
 		return nil, fmt.Errorf("CPA_BASE_URL is required")
@@ -387,4 +482,72 @@ func getInt(key string, fallback int) (int, error) {
 		return 0, fmt.Errorf("%s must be a valid integer: %w", key, err)
 	}
 	return parsed, nil
+}
+
+func getInt64(key string, fallback int64) (int64, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a valid integer: %w", key, err)
+	}
+	return parsed, nil
+}
+
+func getFloat(key string, fallback float64) (float64, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a valid number: %w", key, err)
+	}
+	return parsed, nil
+}
+
+func getStringList(key string, fallback []string) []string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return append([]string(nil), fallback...)
+	}
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		normalized := strings.ToLower(trimmed)
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return result
+}
+
+func parseWeekday(value string) (time.Weekday, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "sunday", "sun", "0":
+		return time.Sunday, nil
+	case "monday", "mon", "1":
+		return time.Monday, nil
+	case "tuesday", "tue", "2":
+		return time.Tuesday, nil
+	case "wednesday", "wed", "3":
+		return time.Wednesday, nil
+	case "thursday", "thu", "4":
+		return time.Thursday, nil
+	case "friday", "fri", "5":
+		return time.Friday, nil
+	case "saturday", "sat", "6":
+		return time.Saturday, nil
+	default:
+		return time.Sunday, fmt.Errorf("must be a weekday name or 0-6")
+	}
 }

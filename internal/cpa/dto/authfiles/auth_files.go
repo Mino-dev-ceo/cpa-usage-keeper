@@ -7,8 +7,28 @@ type AuthFilesResponse struct {
 	Files []AuthFile `json:"files"`
 }
 
+// AuthFileStatusResponse 是 PATCH /management/auth-files/status 响应 DTO。
+type AuthFileStatusResponse struct {
+	Status   string `json:"status"`
+	Disabled bool   `json:"disabled"`
+}
+
+// AuthFilesDeleteResponse 是 DELETE /management/auth-files 响应 DTO。
+type AuthFilesDeleteResponse struct {
+	Status  string                  `json:"status"`
+	Deleted int                     `json:"deleted"`
+	Files   []string                `json:"files"`
+	Failed  []AuthFileDeleteFailure `json:"failed"`
+}
+
+type AuthFileDeleteFailure struct {
+	Name  string `json:"name"`
+	Error string `json:"error"`
+}
+
 // AuthFile 是 CPA /management/auth-files 中单个 auth file 的原始响应 DTO。
 type AuthFile struct {
+	ID             string           `json:"id"`
 	AuthIndex      string           `json:"auth_index"`
 	Name           string           `json:"name"`
 	Email          string           `json:"email"`
@@ -16,10 +36,15 @@ type AuthFile struct {
 	Provider       string           `json:"provider"`
 	Label          string           `json:"label"`
 	Status         string           `json:"status"`
+	StatusMessage  string           `json:"status_message"`
 	Source         string           `json:"source"`
 	Disabled       bool             `json:"disabled"`
 	Unavailable    bool             `json:"unavailable"`
 	RuntimeOnly    bool             `json:"runtime_only"`
+	Success        int64            `json:"success"`
+	Failed         int64            `json:"failed"`
+	UpdatedAt      *time.Time       `json:"updated_at,omitempty"`
+	ModTime        *time.Time       `json:"modtime,omitempty"`
 	Account        string           `json:"account,omitempty"`
 	Metadata       map[string]any   `json:"metadata,omitempty"`
 	Attributes     map[string]any   `json:"attributes,omitempty"`

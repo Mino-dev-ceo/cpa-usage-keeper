@@ -82,6 +82,69 @@ func TestFetchAuthFilesParsesCodexIDTokenFields(t *testing.T) {
 	}
 }
 
+func TestPatchAuthFileStatusUsesManagementPatchEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			t.Fatalf("expected PATCH method, got %s", r.Method)
+		}
+		if r.URL.Path != cpaManagementAuthFilesStatusEndpoint {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer management-secret" {
+			t.Fatalf("expected management Authorization header, got %q", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body["name"] != "codex.json" || body["disabled"] != true {
+			t.Fatalf("unexpected patch body: %#v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","disabled":true}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "management-secret", 2*time.Second, false)
+	result, err := client.PatchAuthFileStatus(context.Background(), " codex.json ", true)
+	if err != nil {
+		t.Fatalf("PatchAuthFileStatus returned error: %v", err)
+	}
+	if result.StatusCode != http.StatusOK || !result.Payload.Disabled || result.Payload.Status != "ok" {
+		t.Fatalf("unexpected patch result: %+v", result)
+	}
+}
+
+func TestDeleteAuthFilesUsesRepeatedNameQuery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Fatalf("expected DELETE method, got %s", r.Method)
+		}
+		if r.URL.Path != cpaManagementAuthFilesEndpoint {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer management-secret" {
+			t.Fatalf("expected management Authorization header, got %q", got)
+		}
+		names := r.URL.Query()["name"]
+		if len(names) != 2 || names[0] != "a.json" || names[1] != "b.json" {
+			t.Fatalf("unexpected delete names: %#v", names)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","deleted":2,"files":["a.json","b.json"]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "management-secret", 2*time.Second, false)
+	result, err := client.DeleteAuthFiles(context.Background(), []string{"a.json", "b.json", "a.json", ""})
+	if err != nil {
+		t.Fatalf("DeleteAuthFiles returned error: %v", err)
+	}
+	if result.Payload.Deleted != 2 || len(result.Payload.Files) != 2 {
+		t.Fatalf("unexpected delete result: %+v", result.Payload)
+	}
+}
+
 func TestCallManagementAPIPostsWrappedRequest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

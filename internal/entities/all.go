@@ -8,5 +8,6 @@ func All() []any {
 		&ModelPriceSetting{},
 		&UsageIdentity{},
 		&APIKeyNote{},
+		&AccountGuardState{},
 	}
 }

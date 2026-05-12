@@ -11,6 +11,7 @@ import (
 	"cpa-usage-keeper/internal/auth"
 	"cpa-usage-keeper/internal/config"
 	"cpa-usage-keeper/internal/cpa"
+	"cpa-usage-keeper/internal/guard"
 	"cpa-usage-keeper/internal/logging"
 	"cpa-usage-keeper/internal/poller"
 	"cpa-usage-keeper/internal/quota"
@@ -39,6 +40,7 @@ type App struct {
 	Poller            Runner
 	Maintenance       *StorageCleanupRunner
 	MetadataSync      *MetadataSyncRunner
+	AccountGuard      *guard.Runner
 	BackupMaintenance *DatabaseBackupRunner
 	LogCloser         io.Closer
 
@@ -96,6 +98,24 @@ func NewWithConfig(cfg config.Config) (*App, error) {
 	usageIdentityService := service.NewUsageIdentityService(db)
 	pricingService := service.NewPricingService(db, cpaClient)
 	quotaService := quota.NewService(db, cpaClient)
+	accountGuardService := guard.NewServiceWithQuotaChecker(db, cpaClient, quotaService, guard.Config{
+		Enabled:                    cfg.AccountGuardEnabled,
+		Interval:                   cfg.AccountGuardInterval,
+		UsageThreshold:             cfg.AccountGuardUsageThreshold,
+		WeeklyTokenLimit:           cfg.AccountGuardWeeklyTokenLimit,
+		ProviderQuotaEnabled:       cfg.AccountGuardProviderQuotaEnabled,
+		DryRun:                     cfg.AccountGuardDryRun,
+		AutoReenable:               cfg.AccountGuardAutoReenable,
+		ResetWeekday:               cfg.AccountGuardResetWeekday,
+		ResetHour:                  cfg.AccountGuardResetHour,
+		RemoveBannedEnabled:        cfg.AccountGuardRemoveBannedEnabled,
+		RemoveBannedDryRun:         cfg.AccountGuardRemoveBannedDryRun,
+		RemoveBannedStatusMessages: cfg.AccountGuardRemoveBannedStatusMessages,
+	})
+	var accountGuard *guard.Runner
+	if cfg.AccountGuardEnabled || cfg.AccountGuardRemoveBannedEnabled {
+		accountGuard = guard.NewRunner(accountGuardService, cfg.AccountGuardInterval)
+	}
 	sessionManager := auth.NewSessionManager(cfg.AuthSessionTTL)
 	authHandler := api.NewAuthHandler(api.AuthConfig{
 		Enabled:       cfg.AuthEnabled,
@@ -110,6 +130,7 @@ func NewWithConfig(cfg config.Config) (*App, error) {
 		Poller:            backgroundPoller,
 		Maintenance:       NewStorageCleanupRunner(syncService),
 		MetadataSync:      NewMetadataSyncRunner(syncService, cfg.MetadataSyncInterval),
+		AccountGuard:      accountGuard,
 		BackupMaintenance: backupMaintenance,
 		LogCloser:         logCloser,
 		Router: api.NewRouter(
@@ -125,7 +146,7 @@ func NewWithConfig(cfg config.Config) (*App, error) {
 			},
 			authHandler,
 			cfg.AppBasePath,
-			api.OptionalProviders{UsageIdentity: usageIdentityService, Quota: quotaService},
+			api.OptionalProviders{UsageIdentity: usageIdentityService, Quota: quotaService, AccountGuard: accountGuardService},
 		),
 	}, nil
 }
@@ -185,6 +206,13 @@ func (a *App) Run() error {
 		a.startBackgroundTask(func() {
 			if err := a.MetadataSync.Run(ctx); err != nil {
 				logrus.Errorf("metadata sync stopped: %v", err)
+			}
+		})
+	}
+	if a.AccountGuard != nil {
+		a.startBackgroundTask(func() {
+			if err := a.AccountGuard.Run(ctx); err != nil {
+				logrus.Errorf("account guard stopped: %v", err)
 			}
 		})
 	}

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
-import { IconRefreshCw } from '@/components/ui/icons'
+import { IconRefreshCw, IconSearch, IconTrash2 } from '@/components/ui/icons'
 import styles from './CredentialSections.module.scss'
+import type { AccountGuardCleanupResponse } from '@/lib/types'
 import type { AuthFileCredentialRow, DisplayQuota, PlanTypeTone } from './credentialViewModels'
 import { CredentialBadge, CredentialRowShell, CredentialSectionShell, CredentialsPagination, MetricPill, RequestMetric, TonePercent, cacheRateTone, capitalize, credentialToneClassName, formatCredentialNumber, successRateTone } from './CredentialSectionShell'
 
@@ -17,16 +18,23 @@ interface AuthFileCredentialsSectionProps {
   loading: boolean
   quotaRefreshing: boolean
   quotaRefreshError: string
+  cleanupLoading: boolean
+  cleanupError: string
+  cleanupResult?: AccountGuardCleanupResponse
   onPageChange: (page: number) => void
   onPageSizeChange: (pageSize: number) => void
   onRefreshQuota: () => Promise<void>
   onRefreshQuotaForAuthIndex: (authIndex: string) => Promise<void>
+  onCleanupBanned: (dryRun?: boolean) => Promise<AccountGuardCleanupResponse | undefined>
+  onClearCleanupResult: () => void
 }
 
-export function AuthFileCredentialsSection({ rows, total, page, totalPages, pageSize, loading, quotaRefreshing, quotaRefreshError, onPageChange, onPageSizeChange, onRefreshQuota, onRefreshQuotaForAuthIndex }: AuthFileCredentialsSectionProps) {
+export function AuthFileCredentialsSection({ rows, total, page, totalPages, pageSize, loading, quotaRefreshing, quotaRefreshError, cleanupLoading, cleanupError, cleanupResult, onPageChange, onPageSizeChange, onRefreshQuota, onRefreshQuotaForAuthIndex, onCleanupBanned, onClearCleanupResult }: AuthFileCredentialsSectionProps) {
   const { t } = useTranslation()
   const quotaRotationPhase = useQuotaRotationPhase()
   const canRefresh = rows.some((row) => !isRowRefreshing(row) && !row.identity.is_deleted) && !quotaRefreshing
+  const cleanupCandidateCount = cleanupResult?.candidates?.length ?? 0
+  const canDeleteCandidates = cleanupCandidateCount > 0 && cleanupResult?.dry_run && !cleanupLoading
 
   return (
     <CredentialSectionShell
@@ -35,24 +43,87 @@ export function AuthFileCredentialsSection({ rows, total, page, totalPages, page
       subtitle={t('usage_stats.credentials_auth_files_subtitle')}
       countLabel={t('usage_stats.credentials_count', { count: total })}
       actions={(
-        <div className={styles.credentialRefreshSwitcher}>
-          <button
-            type="button"
-            className={`${styles.credentialRefreshButton} ${styles.credentialRefreshButtonActive} ${quotaRefreshing ? styles.credentialRefreshButtonLoading : ''}`.trim()}
-            onClick={() => void onRefreshQuota()}
-            disabled={!canRefresh}
-            aria-busy={quotaRefreshing}
-          >
-            <span className={styles.credentialRefreshButtonInner}>
-              {quotaRefreshing ? <LoadingSpinner size={12} className={styles.credentialRefreshSpinner} /> : <IconRefreshCw size={12} />}
-              <span>{quotaRefreshing ? t('usage_stats.credentials_quota_refreshing') : t('usage_stats.credentials_quota_refresh_current_page')}</span>
-            </span>
-          </button>
+        <div className={styles.credentialActionStack}>
+          <div className={styles.credentialRefreshSwitcher}>
+            <button
+              type="button"
+              className={`${styles.credentialRefreshButton} ${styles.credentialRefreshButtonActive} ${quotaRefreshing ? styles.credentialRefreshButtonLoading : ''}`.trim()}
+              onClick={() => void onRefreshQuota()}
+              disabled={!canRefresh}
+              aria-busy={quotaRefreshing}
+            >
+              <span className={styles.credentialRefreshButtonInner}>
+                {quotaRefreshing ? <LoadingSpinner size={12} className={styles.credentialRefreshSpinner} /> : <IconRefreshCw size={12} />}
+                <span>{quotaRefreshing ? t('usage_stats.credentials_quota_refreshing') : t('usage_stats.credentials_quota_refresh_current_page')}</span>
+              </span>
+            </button>
+          </div>
+          <div className={styles.credentialRefreshSwitcher}>
+            <button
+              type="button"
+              className={`${styles.credentialRefreshButton} ${styles.credentialCleanupScanButton} ${cleanupLoading ? styles.credentialRefreshButtonLoading : ''}`.trim()}
+              onClick={() => void onCleanupBanned(true)}
+              disabled={cleanupLoading}
+              aria-busy={cleanupLoading}
+            >
+              <span className={styles.credentialRefreshButtonInner}>
+                {cleanupLoading ? <LoadingSpinner size={12} className={styles.credentialRefreshSpinner} /> : <IconSearch size={12} />}
+                <span>{cleanupLoading ? t('usage_stats.credentials_cleanup_scanning') : t('usage_stats.credentials_cleanup_scan')}</span>
+              </span>
+            </button>
+          </div>
         </div>
       )}
     >
       {/* 批量刷新失败显示在区块顶部，单行任务失败显示在对应限额位置。 */}
       {quotaRefreshError && <div className={styles.credentialInlineError}>{quotaRefreshError}</div>}
+      {cleanupError && <div className={styles.credentialInlineError}>{cleanupError}</div>}
+      {cleanupResult && (
+        <div className={styles.credentialCleanupPanel}>
+          <div className={styles.credentialCleanupSummary}>
+            <strong>
+              {cleanupResult.dry_run
+                ? t('usage_stats.credentials_cleanup_candidates', { count: cleanupCandidateCount })
+                : t('usage_stats.credentials_cleanup_deleted', { count: cleanupResult.deleted?.length ?? 0 })}
+            </strong>
+            <button type="button" className={styles.credentialCleanupClearButton} onClick={onClearCleanupResult}>
+              {t('common.close')}
+            </button>
+          </div>
+          {cleanupResult.dry_run && cleanupCandidateCount === 0 && (
+            <div className={styles.credentialCleanupHint}>{t('usage_stats.credentials_cleanup_no_candidates')}</div>
+          )}
+          {(cleanupResult.candidates?.length ?? 0) > 0 && (
+            <div className={styles.credentialCleanupCandidates}>
+              {cleanupResult.candidates.map((candidate) => (
+                <span key={`${candidate.auth_index}-${candidate.name}`} className={styles.credentialCleanupCandidate}>
+                  <strong>{candidate.name || candidate.auth_index}</strong>
+                  <span>{candidate.status_message || candidate.reason}</span>
+                </span>
+              ))}
+            </div>
+          )}
+          {(cleanupResult.failed?.length ?? 0) > 0 && (
+            <div className={styles.credentialCleanupHint}>
+              {t('usage_stats.credentials_cleanup_failed', { count: cleanupResult.failed.length })}
+            </div>
+          )}
+          {canDeleteCandidates && (
+            <button
+              type="button"
+              className={styles.credentialCleanupDeleteButton}
+              onClick={() => {
+                if (window.confirm(t('usage_stats.credentials_cleanup_confirm', { count: cleanupCandidateCount }))) {
+                  void onCleanupBanned(false)
+                }
+              }}
+            >
+              <IconTrash2 size={13} />
+              <span>{t('usage_stats.credentials_cleanup_delete', { count: cleanupCandidateCount })}</span>
+            </button>
+          )}
+        </div>
+      )}
       {loading && rows.length === 0 && <div className={styles.credentialEmptyState}>{t('common.loading')}</div>}
       {!loading && rows.length === 0 && <div className={styles.credentialEmptyState}>{t('usage_stats.credentials_auth_files_empty')}</div>}
       {rows.map((row) => {
@@ -233,4 +304,3 @@ function QuotaBar({ quota, rotationPhase }: { quota: DisplayQuota; rotationPhase
     </div>
   )
 }
-

@@ -27,6 +27,7 @@ const (
 	migrationUpdateUsageIdentityQuotaFields         = "20260509_update_usage_identity_quota_fields"
 	migrationRemoveUsageIdentityQuotaFields         = "20260510_remove_usage_identity_quota_fields"
 	migrationCreateAPIKeyNotes                      = "20260511_create_api_key_notes"
+	migrationCreateAccountGuardStates               = "20260512_create_account_guard_states"
 )
 
 type schemaMigration struct {
@@ -98,6 +99,7 @@ func orderedMigrations() []databaseMigration {
 		{version: migrationUpdateUsageIdentityQuotaFields, run: updateUsageIdentityQuotaFieldsMigration},
 		{version: migrationRemoveUsageIdentityQuotaFields, run: removeUsageIdentityQuotaFieldsMigration},
 		{version: migrationCreateAPIKeyNotes, run: createAPIKeyNotesMigration},
+		{version: migrationCreateAccountGuardStates, run: createAccountGuardStatesMigration},
 	}
 }
 

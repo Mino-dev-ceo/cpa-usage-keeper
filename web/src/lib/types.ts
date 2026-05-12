@@ -279,6 +279,28 @@ export interface UsageQuotaRefreshResponse {
   limit: number
 }
 
+export interface AccountGuardCleanupCandidate {
+  auth_index: string
+  name: string
+  type: string
+  provider: string
+  status: string
+  status_message: string
+  reason: string
+}
+
+export interface AccountGuardDeleteFailure {
+  name: string
+  error: string
+}
+
+export interface AccountGuardCleanupResponse {
+  dry_run: boolean
+  candidates: AccountGuardCleanupCandidate[]
+  deleted: string[]
+  failed: AccountGuardDeleteFailure[]
+}
+
 export interface UsageAnalysisModel {
   model: string
   total_requests: number
