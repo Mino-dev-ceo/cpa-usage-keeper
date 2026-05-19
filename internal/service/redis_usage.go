@@ -69,7 +69,11 @@ func (d queuedUsageDetail) toUsageEvent(fetchedAt time.Time) entities.UsageEvent
 	}
 	source := strings.TrimSpace(d.Source)
 	authIndex := strings.TrimSpace(d.AuthIndex)
-	eventKey := strings.TrimSpace(d.RequestID)
+	requestID := strings.TrimSpace(d.RequestID)
+	eventKey := requestID
+	if isRedisImageUsageModel(model) {
+		eventKey = BuildRequestScopedEventKey(requestID, apiGroupKey, strings.TrimSpace(d.Provider), strings.TrimSpace(d.Endpoint), model, source, authIndex, d.Failed, tokens)
+	}
 	if eventKey == "" {
 		eventKey = BuildEventKey(apiGroupKey, model, timestamp, source, authIndex, d.Failed, tokens)
 	}
@@ -79,7 +83,7 @@ func (d queuedUsageDetail) toUsageEvent(fetchedAt time.Time) entities.UsageEvent
 		Provider:        strings.TrimSpace(d.Provider),
 		Endpoint:        strings.TrimSpace(d.Endpoint),
 		AuthType:        normalizeRedisAuthType(d.AuthType),
-		RequestID:       strings.TrimSpace(d.RequestID),
+		RequestID:       requestID,
 		Model:           model,
 		ModelAlias:      trimRedisOptionalString(d.Alias),
 		Timestamp:       timestamp,
@@ -93,4 +97,15 @@ func (d queuedUsageDetail) toUsageEvent(fetchedAt time.Time) entities.UsageEvent
 		CachedTokens:    tokens.CachedTokens,
 		TotalTokens:     tokens.TotalTokens,
 	}
+}
+
+func isRedisImageUsageModel(model string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	if normalized == "" {
+		return false
+	}
+	if idx := strings.LastIndex(normalized, "/"); idx >= 0 && idx < len(normalized)-1 {
+		normalized = strings.TrimSpace(normalized[idx+1:])
+	}
+	return strings.Contains(normalized, "image")
 }

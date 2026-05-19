@@ -86,6 +86,46 @@ func TestDecodeRedisUsageMessageFallsBackToProviderWhenAPIKeyIsBlank(t *testing.
 	}
 }
 
+func TestDecodeRedisUsageMessageKeepsSameRequestDifferentModelsDistinct(t *testing.T) {
+	fetchedAt := time.Date(2026, 5, 19, 11, 1, 0, 0, time.UTC)
+	mainEvent, _, err := DecodeRedisUsageMessage(`{
+		"timestamp":"2026-05-19T11:01:00Z",
+		"provider":"codex",
+		"model":"gpt-5.4-mini",
+		"endpoint":"POST /v1/images/generations",
+		"auth_index":"codex-auth",
+		"request_id":"image-req-1",
+		"tokens":{"input_tokens":122,"output_tokens":0,"total_tokens":122}
+	}`, fetchedAt)
+	if err != nil {
+		t.Fatalf("DecodeRedisUsageMessage main returned error: %v", err)
+	}
+	imageEvent, _, err := DecodeRedisUsageMessage(`{
+		"timestamp":"2026-05-19T11:01:00Z",
+		"provider":"codex",
+		"model":"gpt-image-2",
+		"endpoint":"POST /v1/images/generations",
+		"auth_index":"codex-auth",
+		"request_id":"image-req-1",
+		"tokens":{"input_tokens":122,"output_tokens":1756,"total_tokens":1878}
+	}`, fetchedAt)
+	if err != nil {
+		t.Fatalf("DecodeRedisUsageMessage image returned error: %v", err)
+	}
+	if mainEvent.RequestID != "image-req-1" || imageEvent.RequestID != "image-req-1" {
+		t.Fatalf("expected original request id to be preserved, got main=%q image=%q", mainEvent.RequestID, imageEvent.RequestID)
+	}
+	if mainEvent.EventKey != "image-req-1" {
+		t.Fatalf("expected main event to keep request id event key, got %q", mainEvent.EventKey)
+	}
+	if mainEvent.EventKey == imageEvent.EventKey {
+		t.Fatalf("expected same request id with different models to produce distinct event keys, got %q", mainEvent.EventKey)
+	}
+	if imageEvent.Model != "gpt-image-2" || imageEvent.OutputTokens != 1756 || imageEvent.TotalTokens != 1878 {
+		t.Fatalf("unexpected image event: %+v", imageEvent)
+	}
+}
+
 func TestDecodeRedisUsageMessageReportsOnlyMessageError(t *testing.T) {
 	_, _, err := DecodeRedisUsageMessage(`{bad-json}`, time.Date(2026, 4, 27, 8, 0, 0, 0, time.UTC))
 	if err == nil || !strings.Contains(err.Error(), "decode redis usage message") {

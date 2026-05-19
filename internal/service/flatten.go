@@ -30,6 +30,32 @@ func BuildEventKey(apiGroupKey, model string, timestamp time.Time, source, authI
 	return hex.EncodeToString(sum[:])
 }
 
+func BuildRequestScopedEventKey(requestID, apiGroupKey, provider, endpoint, model, source, authIndex string, failed bool, tokens dto.TokenStats) string {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return ""
+	}
+	normalized := normalizeTokens(tokens)
+	payload := fmt.Sprintf(
+		"%s|%s|%s|%s|%s|%s|%s|%t|%d|%d|%d|%d|%d",
+		requestID,
+		strings.TrimSpace(apiGroupKey),
+		strings.TrimSpace(provider),
+		strings.TrimSpace(endpoint),
+		strings.TrimSpace(model),
+		strings.TrimSpace(source),
+		strings.TrimSpace(authIndex),
+		failed,
+		normalized.InputTokens,
+		normalized.OutputTokens,
+		normalized.ReasoningTokens,
+		normalized.CachedTokens,
+		normalized.TotalTokens,
+	)
+	sum := sha256.Sum256([]byte(payload))
+	return "req:" + hex.EncodeToString(sum[:])
+}
+
 func normalizeTokens(tokens dto.TokenStats) dto.TokenStats {
 	if tokens.TotalTokens == 0 {
 		tokens.TotalTokens = tokens.InputTokens + tokens.OutputTokens + tokens.ReasoningTokens
