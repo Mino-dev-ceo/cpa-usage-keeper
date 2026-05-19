@@ -95,6 +95,46 @@ func TestCodexProviderOmitsAccountIDHeaderWhenMissing(t *testing.T) {
 	}
 }
 
+func TestCodexProviderParsesImage2AdditionalRateLimitMap(t *testing.T) {
+	codexUsageJSON := `{
+		"plan_type":"plus",
+		"additional_rate_limits":{
+			"image2":{
+				"allowed":true,
+				"limit_reached":false,
+				"primary_window":{"used_percent":22,"limit_window_seconds":18000,"reset_after_seconds":3600},
+				"secondary_window":{"used_percent":55,"limit_window_seconds":604800,"reset_after_seconds":86400}
+			}
+		}
+	}`
+	caller := &recordingManagementCaller{responses: []*apicall.Response{{
+		StatusCode: 200,
+		BodyText:   codexUsageJSON,
+		Body:       json.RawMessage(codexUsageJSON),
+	}}}
+	provider := quota.NewCodexProvider(caller, quota.DefaultProviderConfigs().Codex)
+
+	output, err := provider.Check(context.Background(), quota.ProviderInput{Identity: entities.UsageIdentity{Identity: "codex-auth"}})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	rows := quota.NormalizeQuotaRows(output)
+	if len(rows) != 2 {
+		t.Fatalf("expected image2 quota rows, got %#v", rows)
+	}
+	primary := findQuotaRow(t, rows, "additional_rate_limits.image2.primary_window")
+	assertQuotaText(t, primary, "image2 5h", "additional", "image2")
+	assertFloatField(t, primary.UsedPercent, 22, "image2 primary usedPercent")
+	assertIntField(t, primary.Window.Seconds, 18000, "image2 primary window seconds")
+	if primary.PlanType != "plus" {
+		t.Fatalf("expected image2 primary planType plus, got %#v", primary.PlanType)
+	}
+	secondary := findQuotaRow(t, rows, "additional_rate_limits.image2.secondary_window")
+	assertQuotaText(t, secondary, "image2 Weekly", "additional", "image2")
+	assertFloatField(t, secondary.UsedPercent, 55, "image2 secondary usedPercent")
+	assertIntField(t, secondary.Window.Seconds, 604800, "image2 secondary window seconds")
+}
+
 func TestCodexProviderRejectsNonSuccessUsageResponse(t *testing.T) {
 	caller := &recordingManagementCaller{responses: []*apicall.Response{{
 		StatusCode: 429,

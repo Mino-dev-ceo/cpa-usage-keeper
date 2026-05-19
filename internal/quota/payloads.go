@@ -3,6 +3,7 @@ package quota
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -52,18 +53,54 @@ func parseCodexUsagePayload(response *apicall.Response) (*CodexUsagePayload, err
 		RateLimit:           parseCodexRateLimitInfo(objectField(object, "rate_limit", "rateLimit")),
 		CodeReviewRateLimit: parseCodexRateLimitInfo(objectField(object, "code_review_rate_limit", "codeReviewRateLimit")),
 	}
+	payload.AdditionalRateLimits = parseCodexAdditionalRateLimits(object)
+	return payload, nil
+}
+
+func parseCodexAdditionalRateLimits(object map[string]json.RawMessage) []CodexAdditionalRateLimit {
+	limits := make([]CodexAdditionalRateLimit, 0)
 	for _, raw := range arrayField(object, "additional_rate_limits", "additionalRateLimits") {
 		limitObject := rawObject(raw)
 		if limitObject == nil {
 			continue
 		}
-		payload.AdditionalRateLimits = append(payload.AdditionalRateLimits, CodexAdditionalRateLimit{
-			LimitName:      stringField(limitObject, "limit_name", "limitName"),
-			MeteredFeature: stringField(limitObject, "metered_feature", "meteredFeature"),
-			RateLimit:      parseCodexRateLimitInfo(objectField(limitObject, "rate_limit", "rateLimit")),
-		})
+		limits = append(limits, parseCodexAdditionalRateLimit("", limitObject))
 	}
-	return payload, nil
+	if len(limits) > 0 {
+		return limits
+	}
+
+	limitsObject := objectField(object, "additional_rate_limits", "additionalRateLimits")
+	if limitsObject == nil {
+		return nil
+	}
+	keys := make([]string, 0, len(limitsObject))
+	for key := range limitsObject {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		limitObject := rawObject(limitsObject[key])
+		if limitObject == nil {
+			continue
+		}
+		limits = append(limits, parseCodexAdditionalRateLimit(key, limitObject))
+	}
+	return limits
+}
+
+func parseCodexAdditionalRateLimit(fallbackName string, object map[string]json.RawMessage) CodexAdditionalRateLimit {
+	limitName := firstNonEmpty(stringField(object, "limit_name", "limitName", "name"), fallbackName)
+	meteredFeature := firstNonEmpty(stringField(object, "metered_feature", "meteredFeature", "metric"), fallbackName, limitName)
+	rateLimit := parseCodexRateLimitInfo(objectField(object, "rate_limit", "rateLimit"))
+	if rateLimit == nil {
+		rateLimit = parseCodexRateLimitInfo(object)
+	}
+	return CodexAdditionalRateLimit{
+		LimitName:      limitName,
+		MeteredFeature: meteredFeature,
+		RateLimit:      rateLimit,
+	}
 }
 
 func parseCodexRateLimitInfo(object map[string]json.RawMessage) *CodexRateLimitInfo {
