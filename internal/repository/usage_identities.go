@@ -207,6 +207,31 @@ func AggregateUsageIdentityStats(ctx context.Context, db *gorm.DB, now time.Time
 	})
 }
 
+func ResetUsageIdentityStats(ctx context.Context, db *gorm.DB) error {
+	if db == nil {
+		return fmt.Errorf("database is nil")
+	}
+
+	updates := map[string]any{
+		"total_requests":                 0,
+		"success_count":                  0,
+		"failure_count":                  0,
+		"input_tokens":                   0,
+		"output_tokens":                  0,
+		"reasoning_tokens":               0,
+		"cached_tokens":                  0,
+		"total_tokens":                   0,
+		"last_aggregated_usage_event_id": 0,
+		"first_used_at":                  nil,
+		"last_used_at":                   nil,
+		"stats_updated_at":               nil,
+	}
+	if err := db.WithContext(ctx).Model(&entities.UsageIdentity{}).Where("1 = 1").Updates(updates).Error; err != nil {
+		return fmt.Errorf("reset usage identity stats: %w", err)
+	}
+	return nil
+}
+
 func aggregateUsageIdentityDelta(tx *gorm.DB, identity entities.UsageIdentity) (dto.UsageIdentityStatsDelta, error) {
 	var delta dto.UsageIdentityStatsDelta
 	// 先按 identity 类型生成 usage_events 过滤条件，避免对无关事件做聚合。

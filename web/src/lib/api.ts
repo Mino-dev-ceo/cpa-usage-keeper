@@ -1,4 +1,4 @@
-import { USAGE_QUOTA_REFRESH_LIMIT, type AccountGuardCleanupResponse, type AuthSessionResponse, type PricingEntry, type PricingResponse, type StatusResponse, type UpdateCheckResponse, type UsageAnalysisResponse, type UsageEventModelFilterOptionsResponse, type UsageEventSourceFilterOptionsResponse, type UsedModelsResponse, type UsageIdentitiesPageResponse, type UsageIdentitiesResponse, type UsageEventsResponse, type UsageIdentityAuthType, type UsageOverviewResponse, type UsageQuotaCacheResponse, type UsageQuotaCheckResponse, type UsageQuotaRefreshResponse, type UsageQuotaRefreshTaskResponse } from './types'
+import { USAGE_QUOTA_REFRESH_LIMIT, type AccountGuardCleanupResponse, type ApplyOfficialPricingResponse, type AuthSessionResponse, type ClearUsageRequest, type ClearUsageResponse, type PricingEntry, type PricingResponse, type StatusResponse, type UpdateCheckResponse, type UsageAnalysisResponse, type UsageEventModelFilterOptionsResponse, type UsageEventSourceFilterOptionsResponse, type UsedModelsResponse, type UsageIdentitiesPageResponse, type UsageIdentitiesResponse, type UsageEventsResponse, type UsageIdentityAuthType, type UsageOverviewResponse, type UsageQuotaCacheResponse, type UsageQuotaCheckResponse, type UsageQuotaRefreshResponse, type UsageQuotaRefreshTaskResponse } from './types'
 
 export class ApiError extends Error {
   status: number
@@ -349,4 +349,32 @@ export async function deletePricing(model: string): Promise<void> {
   if (!response.ok) {
     await parseApiError(response, `Failed to delete pricing: ${response.status}`)
   }
+}
+
+export async function applyOfficialPricing(multiplier: number): Promise<ApplyOfficialPricingResponse> {
+  const response = await apiFetch(apiPath('/pricing/official'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ multiplier }),
+  })
+  if (!response.ok) {
+    await parseApiError(response, `Failed to apply official pricing: ${response.status}`)
+  }
+  return response.json()
+}
+
+export async function clearUsage(request: ClearUsageRequest): Promise<ClearUsageResponse> {
+  const response = await apiFetch(apiPath('/usage/clear'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) {
+    await parseApiError(response, `Failed to clear usage: ${response.status}`)
+  }
+  return response.json()
 }

@@ -1013,6 +1013,7 @@
   flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 10px;
+  align-items: center;
 }
 
 .apiSortBtn {
@@ -1045,6 +1046,12 @@
   background: rgba($primary-color, 0.1);
   color: var(--text-primary);
   font-weight: 600;
+}
+
+.apiClearAllButton {
+  margin-left: auto;
+  border-color: color-mix(in srgb, #dc2626 32%, var(--border-color));
+  color: #b91c1c;
 }
 
 .apiList {
@@ -1169,6 +1176,11 @@
     outline: 2px solid var(--primary-color);
     outline-offset: 2px;
   }
+}
+
+.apiClearButton {
+  border-color: color-mix(in srgb, #dc2626 32%, var(--border-color));
+  color: #b91c1c;
 }
 
 .apiNoteEditor {
@@ -1463,6 +1475,32 @@
   border-radius: 22px;
   border: 1px solid var(--border-color);
   flex: 0 0 auto;
+}
+
+.officialPricePanel {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--bg-secondary) 68%, transparent);
+  border-radius: 22px;
+  border: 1px solid var(--border-color);
+  flex: 0 0 auto;
+
+  .formField {
+    max-width: 180px;
+  }
+
+  @include mobile {
+    align-items: stretch;
+
+    .formField,
+    :global(.btn) {
+      max-width: none;
+      width: 100%;
+    }
+  }
 }
 
 .formRow {

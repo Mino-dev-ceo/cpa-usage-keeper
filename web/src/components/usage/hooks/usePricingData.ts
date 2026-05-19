@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ApiError, deletePricing, fetchPricing, fetchUsedModels, updatePricing } from '@/lib/api';
+import { ApiError, applyOfficialPricing as applyOfficialPricingApi, deletePricing, fetchPricing, fetchUsedModels, updatePricing } from '@/lib/api';
 import { useNotificationStore } from '@/stores';
 import { loadModelPrices, saveModelPrices, type ModelPrice } from '@/utils/usage';
 
@@ -17,6 +17,7 @@ export interface UsePricingDataReturn {
   lastRefreshedAt: Date | null;
   loadPricing: () => Promise<void>;
   setModelPrices: (prices: Record<string, ModelPrice>) => Promise<void>;
+  applyOfficialPricing: (multiplier: number) => Promise<void>;
 }
 
 const pricingToModelPrice = (entry: {
@@ -132,6 +133,35 @@ export function usePricingData(options: UsePricingDataOptions = {}): UsePricingD
     }
   }, [modelPrices, onAuthRequired, showNotification, t]);
 
+  const applyOfficialPricing = useCallback(async (multiplier: number) => {
+    setLoading(true);
+    setError('');
+    try {
+      const result = await applyOfficialPricingApi(multiplier);
+      const nextPrices = {
+        ...modelPrices,
+        ...Object.fromEntries(result.pricing.map((entry) => [entry.model, pricingToModelPrice(entry)])),
+      };
+      saveModelPrices(nextPrices);
+      setModelPricesState(nextPrices);
+      setLastRefreshedAt(new Date());
+      const skipped = result.skipped_models.length > 0
+        ? ` ${t('usage_stats.official_price_apply_skipped', { count: result.skipped_models.length })}`
+        : '';
+      showNotification(`${t('usage_stats.official_price_apply_success', { count: result.pricing.length })}${skipped}`, 'success');
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        onAuthRequired?.();
+        return;
+      }
+      const message = error instanceof Error ? error.message : t('usage_stats.official_price_apply_failed');
+      setError(message);
+      showNotification(message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [modelPrices, onAuthRequired, showNotification, t]);
+
   return {
     modelNames,
     modelPrices,
@@ -140,5 +170,6 @@ export function usePricingData(options: UsePricingDataOptions = {}): UsePricingD
     lastRefreshedAt,
     loadPricing,
     setModelPrices,
+    applyOfficialPricing,
   };
 }

@@ -13,7 +13,7 @@ import {
   Legend,
   Filler
 } from 'chart.js';
-import { ApiError, fetchStatus, fetchUpdateCheck, fetchUsageAnalysis, fetchUsageEventModelFilterOptions, fetchUsageEventSourceFilterOptions, fetchUsageEvents, updateAPIKeyNote } from '@/lib/api';
+import { ApiError, clearUsage, fetchStatus, fetchUpdateCheck, fetchUsageAnalysis, fetchUsageEventModelFilterOptions, fetchUsageEventSourceFilterOptions, fetchUsageEvents, updateAPIKeyNote } from '@/lib/api';
 import type { StatusResponse, UsageAnalysisResponse, UsageEvent, UsageSourceFilterOption } from '@/lib/types';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher';
@@ -444,6 +444,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
     error: pricingError,
     loadPricing,
     setModelPrices,
+    applyOfficialPricing,
   } = usePricingData({
     onAuthRequired,
     enabled: activeTab === 'pricing',
@@ -1072,6 +1073,40 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
       throw error;
     }
   }, [onAuthRequired]);
+
+  const refreshUsageAfterClear = useCallback(async () => {
+    await Promise.all([
+      loadAnalysis(),
+      loadEventFilterOptions(),
+      loadEvents(),
+      loadPricing(),
+    ]);
+  }, [loadAnalysis, loadEventFilterOptions, loadEvents, loadPricing]);
+
+  const handleClearApiUsage = useCallback(async (apiKey: string) => {
+    try {
+      await clearUsage({ api_key: apiKey });
+      await refreshUsageAfterClear();
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        onAuthRequired?.();
+      }
+      throw error;
+    }
+  }, [onAuthRequired, refreshUsageAfterClear]);
+
+  const handleClearAllUsage = useCallback(async () => {
+    try {
+      await clearUsage({ all: true });
+      await refreshUsageAfterClear();
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        onAuthRequired?.();
+      }
+      throw error;
+    }
+  }, [onAuthRequired, refreshUsageAfterClear]);
+
   const modelStats = useMemo(
     () => analysisData.models.map((model) => {
       const pricing = modelPrices[model.model];
@@ -1370,7 +1405,14 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
               <>
                 {analysisError && <div className={styles.errorBox}>{analysisError}</div>}
                 <div className={styles.detailsGrid}>
-                  <ApiDetailsCard apiStats={apiStats} loading={analysisLoading} hasPrices={hasPrices} onSaveNote={handleSaveApiNote} />
+                  <ApiDetailsCard
+                    apiStats={apiStats}
+                    loading={analysisLoading}
+                    hasPrices={hasPrices}
+                    onSaveNote={handleSaveApiNote}
+                    onClearUsage={handleClearApiUsage}
+                    onClearAllUsage={handleClearAllUsage}
+                  />
                   <ModelStatsCard modelStats={modelStats} loading={analysisLoading} hasPrices={hasPrices} />
                 </div>
               </>
@@ -1444,6 +1486,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
                 modelNames={modelNames}
                 modelPrices={modelPrices}
                 onPricesChange={setModelPrices}
+                onApplyOfficialPricing={applyOfficialPricing}
                 loading={pricingLoading}
               />
             )}

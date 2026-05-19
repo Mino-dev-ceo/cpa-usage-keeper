@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -24,11 +25,26 @@ type pricingListResponse struct {
 	Pricing []pricingEntryResponse `json:"pricing"`
 }
 
+type officialPricingProvider interface {
+	ApplyOfficialPricing(context.Context, servicedto.ApplyOfficialPricingInput) (*servicedto.ApplyOfficialPricingResult, error)
+}
+
 type updatePricingRequest struct {
 	Model                string  `json:"model"`
 	PromptPricePer1M     float64 `json:"prompt_price_per_1m"`
 	CompletionPricePer1M float64 `json:"completion_price_per_1m"`
 	CachePricePer1M      float64 `json:"cache_price_per_1m"`
+}
+
+type applyOfficialPricingRequest struct {
+	Multiplier float64 `json:"multiplier"`
+}
+
+type applyOfficialPricingResponse struct {
+	Pricing       []pricingEntryResponse `json:"pricing"`
+	SkippedModels []string               `json:"skipped_models"`
+	Multiplier    float64                `json:"multiplier"`
+	Source        string                 `json:"source"`
 }
 
 func registerPricingRoutes(router gin.IRoutes, pricingProvider service.PricingProvider) {
@@ -77,6 +93,46 @@ func registerPricingRoutes(router gin.IRoutes, pricingProvider service.PricingPr
 
 	router.PUT("/pricing/:model", func(c *gin.Context) {
 		updatePricing(c, pricingProvider, c.Param("model"))
+	})
+
+	router.POST("/pricing/official", func(c *gin.Context) {
+		provider, ok := any(pricingProvider).(officialPricingProvider)
+		if !ok || provider == nil {
+			c.JSON(http.StatusNotImplemented, gin.H{"error": "official pricing provider is not configured"})
+			return
+		}
+
+		var request applyOfficialPricingRequest
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		result, err := provider.ApplyOfficialPricing(c.Request.Context(), servicedto.ApplyOfficialPricingInput{Multiplier: request.Multiplier})
+		if err != nil {
+			if strings.Contains(err.Error(), "multiplier") {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			writeInternalError(c, "apply official pricing failed", err)
+			return
+		}
+
+		response := make([]pricingEntryResponse, 0, len(result.Pricing))
+		for _, setting := range result.Pricing {
+			response = append(response, pricingEntryResponse{
+				Model:                setting.Model,
+				PromptPricePer1M:     setting.PromptPricePer1M,
+				CompletionPricePer1M: setting.CompletionPricePer1M,
+				CachePricePer1M:      setting.CachePricePer1M,
+			})
+		}
+		c.JSON(http.StatusOK, applyOfficialPricingResponse{
+			Pricing:       response,
+			SkippedModels: result.SkippedModels,
+			Multiplier:    result.Multiplier,
+			Source:        result.Source,
+		})
 	})
 
 	router.DELETE("/pricing", func(c *gin.Context) {

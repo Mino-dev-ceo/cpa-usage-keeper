@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,8 +15,10 @@ import (
 
 type usageAnalysisStub struct {
 	analysis      *servicedto.UsageAnalysisSnapshot
+	clearResult   *servicedto.ClearUsageResult
 	err           error
 	lastFilter    servicedto.UsageFilter
+	lastClear     servicedto.ClearUsageInput
 	analysisCalls int
 }
 
@@ -39,6 +42,14 @@ func (s *usageAnalysisStub) GetUsageAnalysis(_ context.Context, filter servicedt
 	s.lastFilter = filter
 	s.analysisCalls++
 	return s.analysis, s.err
+}
+
+func (s *usageAnalysisStub) ClearUsage(_ context.Context, input servicedto.ClearUsageInput) (*servicedto.ClearUsageResult, error) {
+	s.lastClear = input
+	if s.clearResult != nil {
+		return s.clearResult, s.err
+	}
+	return &servicedto.ClearUsageResult{DeletedEvents: 0, ClearedAliases: []string{input.APIAlias}, All: input.All}, s.err
 }
 
 func TestUsageAnalysisReturnsAggregatedRows(t *testing.T) {
@@ -108,6 +119,28 @@ func TestUsageAnalysisReturnsAggregatedRows(t *testing.T) {
 	}
 	if provider.lastFilter.StartTime == nil || provider.lastFilter.EndTime == nil {
 		t.Fatalf("expected resolved time bounds in filter, got %+v", provider.lastFilter)
+	}
+}
+
+func TestClearUsageRoutePassesRedactedAlias(t *testing.T) {
+	provider := &usageAnalysisStub{
+		clearResult: &servicedto.ClearUsageResult{
+			DeletedEvents:  3,
+			ClearedAliases: []string{"redacted_api_abc123"},
+		},
+	}
+	router := NewRouter(nil, nil, provider, nil, AuthConfig{}, nil, "")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/usage/clear", strings.NewReader(`{"api_key":"redacted_api_abc123"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK || !contains(resp.Body.String(), `"deleted_events":3`) {
+		t.Fatalf("unexpected clear usage response: %d %s", resp.Code, resp.Body.String())
+	}
+	if provider.lastClear.APIAlias != "redacted_api_abc123" || provider.lastClear.All {
+		t.Fatalf("unexpected clear input: %+v", provider.lastClear)
 	}
 }
 

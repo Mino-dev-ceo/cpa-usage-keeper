@@ -220,6 +220,40 @@ func TestPricingServiceValidatesWithLocalModelsWhenCPAFetchFails(t *testing.T) {
 	}
 }
 
+func TestPricingServiceAppliesOfficialPricingMultiplier(t *testing.T) {
+	db := openPricingServiceTestDatabase(t)
+	service := NewPricingService(db, stubModelsFetcher{result: &response.ModelsResult{Payload: models.ModelsResponse{Data: []models.ModelInfo{
+		{ID: "gpt-5.4-mini"},
+		{ID: "gpt-image-2"},
+		{ID: "unknown-model"},
+	}}}})
+
+	result, err := service.(*pricingService).ApplyOfficialPricing(context.Background(), servicedto.ApplyOfficialPricingInput{Multiplier: 0.1})
+	if err != nil {
+		t.Fatalf("apply official pricing: %v", err)
+	}
+	if len(result.Pricing) != 2 {
+		t.Fatalf("expected 2 updated prices, got %#v", result.Pricing)
+	}
+	settings, err := repository.ListModelPriceSettings(db)
+	if err != nil {
+		t.Fatalf("list pricing: %v", err)
+	}
+	prices := map[string]entities.ModelPriceSetting{}
+	for _, setting := range settings {
+		prices[setting.Model] = setting
+	}
+	if prices["gpt-5.4-mini"].PromptPricePer1M != 0.025 || prices["gpt-5.4-mini"].CompletionPricePer1M != 0.2 {
+		t.Fatalf("unexpected mini price: %+v", prices["gpt-5.4-mini"])
+	}
+	if prices["gpt-image-2"].PromptPricePer1M != 0.5 || prices["gpt-image-2"].CompletionPricePer1M != 3 {
+		t.Fatalf("unexpected image price: %+v", prices["gpt-image-2"])
+	}
+	if len(result.SkippedModels) != 1 || result.SkippedModels[0] != "unknown-model" {
+		t.Fatalf("expected unknown model to be skipped, got %#v", result.SkippedModels)
+	}
+}
+
 type stubModelsFetcher struct {
 	result *response.ModelsResult
 	err    error

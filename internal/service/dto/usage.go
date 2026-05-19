@@ -99,6 +99,17 @@ type APIKeyNote struct {
 	Note     string
 }
 
+type ClearUsageInput struct {
+	APIAlias string
+	All      bool
+}
+
+type ClearUsageResult struct {
+	DeletedEvents  int64
+	ClearedAliases []string
+	All            bool
+}
+
 // UsageOverviewSummary 是 overview summary 的服务层结果。
 type UsageOverviewSummary struct {
 	RequestCount    int64

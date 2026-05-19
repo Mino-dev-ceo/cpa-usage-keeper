@@ -350,6 +350,25 @@ export interface PricingResponse {
   pricing: PricingEntry[]
 }
 
+export interface ApplyOfficialPricingResponse {
+  pricing: PricingEntry[]
+  skipped_models: string[]
+  multiplier: number
+  source: string
+}
+
+export interface ClearUsageRequest {
+  api_alias?: string
+  api_key?: string
+  all?: boolean
+}
+
+export interface ClearUsageResponse {
+  deleted_events: number
+  cleared_aliases: string[]
+  all: boolean
+}
+
 export type UsageTimeRange = 'all' | '4h' | '8h' | '12h' | '24h' | 'today' | '7d' | '30d' | 'custom'
 
 export interface UsageFilterWindow {

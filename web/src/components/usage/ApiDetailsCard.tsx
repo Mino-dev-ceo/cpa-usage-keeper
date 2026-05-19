@@ -19,12 +19,14 @@ export interface ApiDetailsCardProps {
   loading: boolean;
   hasPrices: boolean;
   onSaveNote?: (apiKey: string, note: string) => Promise<void>;
+  onClearUsage?: (apiKey: string) => Promise<void>;
+  onClearAllUsage?: () => Promise<void>;
 }
 
 type ApiSortKey = 'endpoint' | 'requests' | 'tokens' | 'cost';
 type SortDir = 'asc' | 'desc';
 
-export function ApiDetailsCard({ apiStats, loading, hasPrices, onSaveNote }: ApiDetailsCardProps) {
+export function ApiDetailsCard({ apiStats, loading, hasPrices, onSaveNote, onClearUsage, onClearAllUsage }: ApiDetailsCardProps) {
   const { t } = useTranslation();
   const [expandedApis, setExpandedApis] = useState<Set<string>>(new Set());
   const [sortKey, setSortKey] = useState<ApiSortKey>('requests');
@@ -32,7 +34,9 @@ export function ApiDetailsCard({ apiStats, loading, hasPrices, onSaveNote }: Api
   const [editingEndpoint, setEditingEndpoint] = useState<string | null>(null);
   const [draftNote, setDraftNote] = useState('');
   const [savingEndpoint, setSavingEndpoint] = useState<string | null>(null);
+  const [clearingEndpoint, setClearingEndpoint] = useState<string | null>(null);
   const [noteError, setNoteError] = useState<string | null>(null);
+  const [clearError, setClearError] = useState<string | null>(null);
 
   const toggleExpand = (endpoint: string) => {
     setExpandedApis((prev) => {
@@ -79,6 +83,34 @@ export function ApiDetailsCard({ apiStats, loading, hasPrices, onSaveNote }: Api
       setNoteError(error instanceof Error ? error.message : t('usage_stats.api_note_save_failed'));
     } finally {
       setSavingEndpoint(null);
+    }
+  };
+
+  const clearUsageForApi = async (api: ApiStats) => {
+    if (!onClearUsage) return;
+    if (!window.confirm(t('usage_stats.api_usage_clear_confirm', { name: api.displayName }))) return;
+    setClearingEndpoint(api.endpoint);
+    setClearError(null);
+    try {
+      await onClearUsage(api.endpoint);
+    } catch (error) {
+      setClearError(error instanceof Error ? error.message : t('usage_stats.api_usage_clear_failed'));
+    } finally {
+      setClearingEndpoint(null);
+    }
+  };
+
+  const clearAllUsage = async () => {
+    if (!onClearAllUsage) return;
+    if (!window.confirm(t('usage_stats.api_usage_clear_all_confirm'))) return;
+    setClearingEndpoint('__all__');
+    setClearError(null);
+    try {
+      await onClearAllUsage();
+    } catch (error) {
+      setClearError(error instanceof Error ? error.message : t('usage_stats.api_usage_clear_failed'));
+    } finally {
+      setClearingEndpoint(null);
     }
   };
 
@@ -132,13 +164,25 @@ export function ApiDetailsCard({ apiStats, loading, hasPrices, onSaveNote }: Api
                 {t(labelKey)}{arrow(key)}
               </button>
             ))}
+            {onClearAllUsage && (
+              <button
+                type="button"
+                className={`${styles.apiSortBtn} ${styles.apiClearAllButton}`}
+                onClick={() => { void clearAllUsage(); }}
+                disabled={clearingEndpoint !== null}
+              >
+                {clearingEndpoint === '__all__' ? t('common.loading') : t('usage_stats.api_usage_clear_all')}
+              </button>
+            )}
           </div>
+          {clearError && <div className={styles.apiNoteError}>{clearError}</div>}
           <div className={styles.detailsScroll}>
             <div className={styles.apiList}>
               {sorted.map((api, index) => {
                 const isExpanded = expandedApis.has(api.endpoint);
                 const isEditing = editingEndpoint === api.endpoint;
                 const isSaving = savingEndpoint === api.endpoint;
+                const isClearing = clearingEndpoint === api.endpoint;
                 const panelId = `api-models-${index}`;
 
                 return (
@@ -188,6 +232,16 @@ export function ApiDetailsCard({ apiStats, loading, hasPrices, onSaveNote }: Api
                           disabled={isSaving}
                         >
                           {api.note ? t('usage_stats.api_note_edit') : t('usage_stats.api_note_add')}
+                        </button>
+                      )}
+                      {onClearUsage && (
+                        <button
+                          type="button"
+                          className={`${styles.apiNoteButton} ${styles.apiClearButton}`}
+                          onClick={() => { void clearUsageForApi(api); }}
+                          disabled={isClearing || clearingEndpoint !== null}
+                        >
+                          {isClearing ? t('common.loading') : t('usage_stats.api_usage_clear')}
                         </button>
                       )}
                     </div>

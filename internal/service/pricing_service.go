@@ -81,6 +81,53 @@ func (s *pricingService) DeletePricing(_ context.Context, model string) error {
 	return repository.DeleteModelPriceSetting(s.db, model)
 }
 
+func (s *pricingService) ApplyOfficialPricing(ctx context.Context, input servicedto.ApplyOfficialPricingInput) (*servicedto.ApplyOfficialPricingResult, error) {
+	if s.db == nil {
+		return nil, fmt.Errorf("database is nil")
+	}
+	if input.Multiplier <= 0 {
+		return nil, fmt.Errorf("multiplier must be greater than zero")
+	}
+
+	models, err := s.effectiveModels(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	catalog, source := loadOpenAIPricingCatalog(ctx)
+	updated := make([]entities.ModelPriceSetting, 0, len(models))
+	skipped := make([]string, 0)
+	for _, model := range models {
+		price, ok := catalog.PriceForModel(model)
+		if !ok {
+			skipped = append(skipped, model)
+			continue
+		}
+
+		setting, err := repository.UpsertModelPriceSetting(s.db, repodto.ModelPriceSettingInput{
+			Model:                model,
+			PromptPricePer1M:     price.PromptPricePer1M * input.Multiplier,
+			CompletionPricePer1M: price.CompletionPricePer1M * input.Multiplier,
+			CachePricePer1M:      price.CachePricePer1M * input.Multiplier,
+		})
+		if err != nil {
+			return nil, err
+		}
+		updated = append(updated, *setting)
+	}
+
+	sort.Slice(updated, func(left, right int) bool {
+		return updated[left].Model < updated[right].Model
+	})
+	sort.Strings(skipped)
+	return &servicedto.ApplyOfficialPricingResult{
+		Pricing:       updated,
+		SkippedModels: skipped,
+		Multiplier:    input.Multiplier,
+		Source:        source,
+	}, nil
+}
+
 func (s *pricingService) effectiveModels(ctx context.Context) ([]string, error) {
 	if s.modelsFetcher == nil {
 		return repository.ListUsedModels(s.db)

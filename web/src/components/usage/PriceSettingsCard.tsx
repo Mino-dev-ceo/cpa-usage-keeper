@@ -19,6 +19,7 @@ export interface PriceSettingsCardProps {
   modelNames: string[];
   modelPrices: Record<string, ModelPrice>;
   onPricesChange: (prices: Record<string, ModelPrice>) => void;
+  onApplyOfficialPricing?: (multiplier: number) => Promise<void>;
   loading?: boolean;
 }
 
@@ -67,6 +68,7 @@ export function PriceSettingsCard({
   modelNames,
   modelPrices,
   onPricesChange,
+  onApplyOfficialPricing,
   loading = false
 }: PriceSettingsCardProps) {
   const { t } = useTranslation();
@@ -82,6 +84,9 @@ export function PriceSettingsCard({
   const [editPrompt, setEditPrompt] = useState('');
   const [editCompletion, setEditCompletion] = useState('');
   const [editCache, setEditCache] = useState('');
+  const [officialMultiplier, setOfficialMultiplier] = useState('0.1');
+  const [officialApplyLoading, setOfficialApplyLoading] = useState(false);
+  const [officialError, setOfficialError] = useState('');
 
   const handleSavePrice = () => {
     if (!selectedModel) return;
@@ -136,6 +141,24 @@ export function PriceSettingsCard({
     }
   };
 
+  const handleApplyOfficialPricing = async () => {
+    if (!onApplyOfficialPricing) return;
+    const multiplier = parsePriceValue(officialMultiplier);
+    if (multiplier === null || multiplier <= 0) {
+      setOfficialError(t('usage_stats.official_price_multiplier_invalid'));
+      return;
+    }
+    setOfficialApplyLoading(true);
+    setOfficialError('');
+    try {
+      await onApplyOfficialPricing(multiplier);
+    } catch (error) {
+      setOfficialError(error instanceof Error ? error.message : t('usage_stats.official_price_apply_failed'));
+    } finally {
+      setOfficialApplyLoading(false);
+    }
+  };
+
   const options = useMemo(
     () => buildPricingModelOptions(
       modelNames,
@@ -163,6 +186,32 @@ export function PriceSettingsCard({
           <div className={styles.hint}>{t('common.loading')}</div>
         ) : (
           <>
+            {onApplyOfficialPricing && (
+              <div className={styles.officialPricePanel}>
+                <div className={styles.formField}>
+                  <label>{t('usage_stats.official_price_multiplier')}</label>
+                  <Input
+                    type="number"
+                    value={officialMultiplier}
+                    onChange={(e) => setOfficialMultiplier(e.target.value)}
+                    placeholder="0.1"
+                    step="0.01"
+                    className={styles.usagePillControl}
+                    disabled={officialApplyLoading || loading}
+                  />
+                </div>
+                <Button
+                  variant="secondary"
+                  className={styles.usagePillAction}
+                  onClick={() => { void handleApplyOfficialPricing(); }}
+                  disabled={officialApplyLoading || loading}
+                >
+                  {officialApplyLoading ? t('common.loading') : t('usage_stats.official_price_apply')}
+                </Button>
+                {officialError && <div className={styles.apiNoteError}>{officialError}</div>}
+              </div>
+            )}
+
             <div className={styles.priceForm}>
               <div className={styles.formRow}>
                 <div className={styles.formField}>

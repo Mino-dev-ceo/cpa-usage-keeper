@@ -118,6 +118,70 @@ func queryUsageEvents(db *gorm.DB) *gorm.DB {
 	return db.Model(&entities.UsageEvent{})
 }
 
+func ListUsageEventAPIGroupKeys(db *gorm.DB) ([]string, error) {
+	if db == nil {
+		return nil, fmt.Errorf("database is nil")
+	}
+
+	var values []string
+	if err := db.Model(&entities.UsageEvent{}).
+		Select("DISTINCT TRIM(api_group_key)").
+		Pluck("api_group_key", &values).Error; err != nil {
+		return nil, fmt.Errorf("list usage event api group keys: %w", err)
+	}
+
+	keys := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		key := strings.TrimSpace(value)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys, nil
+}
+
+func DeleteUsageEventsByAPIGroupKeys(db *gorm.DB, apiGroupKeys []string) (int64, error) {
+	if db == nil {
+		return 0, fmt.Errorf("database is nil")
+	}
+
+	normalized := make([]string, 0, len(apiGroupKeys))
+	seen := make(map[string]struct{}, len(apiGroupKeys))
+	for _, key := range apiGroupKeys {
+		trimmed := strings.TrimSpace(key)
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		normalized = append(normalized, trimmed)
+	}
+	if len(normalized) == 0 {
+		return 0, nil
+	}
+
+	result := db.Where("TRIM(api_group_key) IN ?", normalized).Delete(&entities.UsageEvent{})
+	if result.Error != nil {
+		return 0, fmt.Errorf("delete usage events by api group keys: %w", result.Error)
+	}
+	return result.RowsAffected, nil
+}
+
+func DeleteAllUsageEvents(db *gorm.DB) (int64, error) {
+	if db == nil {
+		return 0, fmt.Errorf("database is nil")
+	}
+
+	result := db.Where("1 = 1").Delete(&entities.UsageEvent{})
+	if result.Error != nil {
+		return 0, fmt.Errorf("delete all usage events: %w", result.Error)
+	}
+	return result.RowsAffected, nil
+}
+
 func applyUsageQueryWindow(query *gorm.DB, filter dto.UsageQueryFilter) *gorm.DB {
 	if filter.StartTime != nil {
 		query = query.Where("timestamp >= ?", filter.StartTime.UTC())

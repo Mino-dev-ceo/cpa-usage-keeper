@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"cpa-usage-keeper/internal/cpa/dto/response"
 	"cpa-usage-keeper/internal/redact"
@@ -163,6 +164,60 @@ func (s *usageService) ListUsageEventFilterOptions(_ context.Context, filter ser
 		return nil, err
 	}
 	return &servicedto.UsageEventFilterOptions{Models: options.Models}, nil
+}
+
+func (s *usageService) ClearUsage(ctx context.Context, input servicedto.ClearUsageInput) (*servicedto.ClearUsageResult, error) {
+	if s.db == nil {
+		return nil, fmt.Errorf("database is nil")
+	}
+
+	var deleted int64
+	var clearedAliases []string
+	if input.All {
+		count, err := repository.DeleteAllUsageEvents(s.db)
+		if err != nil {
+			return nil, err
+		}
+		deleted = count
+		clearedAliases = []string{"all"}
+	} else {
+		alias := strings.TrimSpace(input.APIAlias)
+		if alias == "" {
+			return nil, fmt.Errorf("api alias is required")
+		}
+
+		keys, err := repository.ListUsageEventAPIGroupKeys(s.db)
+		if err != nil {
+			return nil, err
+		}
+		matchedKeys := make([]string, 0, 1)
+		for _, key := range keys {
+			if key == alias || redact.APIAlias(key) == alias {
+				matchedKeys = append(matchedKeys, key)
+			}
+		}
+		count, err := repository.DeleteUsageEventsByAPIGroupKeys(s.db, matchedKeys)
+		if err != nil {
+			return nil, err
+		}
+		deleted = count
+		clearedAliases = []string{alias}
+	}
+
+	if deleted > 0 {
+		if err := repository.ResetUsageIdentityStats(ctx, s.db); err != nil {
+			return nil, err
+		}
+		if err := repository.AggregateUsageIdentityStats(ctx, s.db, time.Now().UTC()); err != nil {
+			return nil, err
+		}
+	}
+
+	return &servicedto.ClearUsageResult{
+		DeletedEvents:  deleted,
+		ClearedAliases: clearedAliases,
+		All:            input.All,
+	}, nil
 }
 
 // Usage 页面里的 Analysis tab 只下传时间窗口，仓储层负责按 API 和 model 聚合。

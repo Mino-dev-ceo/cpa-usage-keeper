@@ -12,12 +12,14 @@ import (
 )
 
 type pricingStub struct {
-	usedModels []string
-	pricing    []entities.ModelPriceSetting
-	updated    *entities.ModelPriceSetting
-	lastUpdate *servicedto.UpdatePricingInput
-	deleted    string
-	err        error
+	usedModels     []string
+	pricing        []entities.ModelPriceSetting
+	updated        *entities.ModelPriceSetting
+	officialResult *servicedto.ApplyOfficialPricingResult
+	lastUpdate     *servicedto.UpdatePricingInput
+	lastMultiplier float64
+	deleted        string
+	err            error
 }
 
 func (s pricingStub) ListUsedModels(context.Context) ([]string, error) {
@@ -36,6 +38,11 @@ func (s *pricingStub) UpdatePricing(_ context.Context, input servicedto.UpdatePr
 func (s *pricingStub) DeletePricing(_ context.Context, model string) error {
 	s.deleted = model
 	return s.err
+}
+
+func (s *pricingStub) ApplyOfficialPricing(_ context.Context, input servicedto.ApplyOfficialPricingInput) (*servicedto.ApplyOfficialPricingResult, error) {
+	s.lastMultiplier = input.Multiplier
+	return s.officialResult, s.err
 }
 
 func TestPricingRoutesReturnEmptyResponsesWithoutProvider(t *testing.T) {
@@ -140,5 +147,34 @@ func TestDeletePricingRoute(t *testing.T) {
 	}
 	if provider.deleted != "openai/gpt-4.1" {
 		t.Fatalf("expected model to be deleted, got %q", provider.deleted)
+	}
+}
+
+func TestApplyOfficialPricingRoute(t *testing.T) {
+	provider := &pricingStub{
+		officialResult: &servicedto.ApplyOfficialPricingResult{
+			Pricing: []entities.ModelPriceSetting{{
+				Model:                "gpt-5.4-mini",
+				PromptPricePer1M:     0.025,
+				CompletionPricePer1M: 0.2,
+				CachePricePer1M:      0.0025,
+			}},
+			SkippedModels: []string{"unknown-model"},
+			Multiplier:    0.1,
+			Source:        "builtin-openai-pricing-2026-05-19",
+		},
+	}
+	router := NewRouter(nil, nil, nil, provider, AuthConfig{}, nil, "")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pricing/official", strings.NewReader(`{"multiplier":0.1}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK || !contains(resp.Body.String(), `"model":"gpt-5.4-mini"`) || !contains(resp.Body.String(), `"unknown-model"`) {
+		t.Fatalf("unexpected official pricing response: %d %s", resp.Code, resp.Body.String())
+	}
+	if provider.lastMultiplier != 0.1 {
+		t.Fatalf("expected multiplier 0.1, got %f", provider.lastMultiplier)
 	}
 }
