@@ -218,6 +218,9 @@ function AuthFileQuotaPanel({ row, rotationPhase }: { row: AuthFileCredentialRow
             <span key={quota.key} className={styles.credentialQuotaChip}>
               <span>{quota.label}</span>
               {quota.remaining !== undefined && <strong>{formatCredentialNumber(quota.remaining)}</strong>}
+              {quota.remaining === undefined && quota.percent !== null && (
+                <strong>{t(`usage_stats.credentials_quota_percent_${quota.percentKind}`, { percent: `${Math.round(quota.percent)}%` })}</strong>
+              )}
             </span>
           ))}
         </div>

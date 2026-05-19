@@ -70,10 +70,19 @@ func parseCodexAdditionalRateLimits(object map[string]json.RawMessage) []CodexAd
 		return limits
 	}
 
-	limitsObject := objectField(object, "additional_rate_limits", "additionalRateLimits")
+	limits = append(limits, parseCodexAdditionalRateLimitMap(objectField(object, "additional_rate_limits", "additionalRateLimits"))...)
+	limits = append(limits, parseCodexTopLevelAdditionalRateLimits(object)...)
+	if len(limits) == 0 {
+		return nil
+	}
+	return limits
+}
+
+func parseCodexAdditionalRateLimitMap(limitsObject map[string]json.RawMessage) []CodexAdditionalRateLimit {
 	if limitsObject == nil {
 		return nil
 	}
+	limits := make([]CodexAdditionalRateLimit, 0, len(limitsObject))
 	keys := make([]string, 0, len(limitsObject))
 	for key := range limitsObject {
 		keys = append(keys, key)
@@ -81,7 +90,7 @@ func parseCodexAdditionalRateLimits(object map[string]json.RawMessage) []CodexAd
 	sort.Strings(keys)
 	for _, key := range keys {
 		limitObject := rawObject(limitsObject[key])
-		if limitObject == nil {
+		if limitObject == nil || !containsCodexRateLimitInfo(limitObject) {
 			continue
 		}
 		limits = append(limits, parseCodexAdditionalRateLimit(key, limitObject))
@@ -89,7 +98,29 @@ func parseCodexAdditionalRateLimits(object map[string]json.RawMessage) []CodexAd
 	return limits
 }
 
+func parseCodexTopLevelAdditionalRateLimits(object map[string]json.RawMessage) []CodexAdditionalRateLimit {
+	keys := make([]string, 0, len(object))
+	for key := range object {
+		if isKnownCodexUsageField(key) {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	limits := make([]CodexAdditionalRateLimit, 0, len(keys))
+	for _, key := range keys {
+		limitObject := rawObject(object[key])
+		if limitObject == nil || !containsCodexRateLimitInfo(limitObject) {
+			continue
+		}
+		limits = append(limits, parseCodexAdditionalRateLimit(codexRateLimitNameFromKey(key), limitObject))
+	}
+	return limits
+}
+
 func parseCodexAdditionalRateLimit(fallbackName string, object map[string]json.RawMessage) CodexAdditionalRateLimit {
+	fallbackName = codexRateLimitNameFromKey(fallbackName)
 	limitName := firstNonEmpty(stringField(object, "limit_name", "limitName", "name"), fallbackName)
 	meteredFeature := firstNonEmpty(stringField(object, "metered_feature", "meteredFeature", "metric"), fallbackName, limitName)
 	rateLimit := parseCodexRateLimitInfo(objectField(object, "rate_limit", "rateLimit"))
@@ -103,15 +134,53 @@ func parseCodexAdditionalRateLimit(fallbackName string, object map[string]json.R
 	}
 }
 
+func isKnownCodexUsageField(key string) bool {
+	switch strings.TrimSpace(key) {
+	case "plan_type", "planType", "rate_limit", "rateLimit", "code_review_rate_limit", "codeReviewRateLimit", "additional_rate_limits", "additionalRateLimits":
+		return true
+	default:
+		return false
+	}
+}
+
+func codexRateLimitNameFromKey(key string) string {
+	name := strings.TrimSpace(key)
+	name = strings.TrimSuffix(name, "_rate_limit")
+	name = strings.TrimSuffix(name, "-rate-limit")
+	name = strings.TrimSuffix(name, "RateLimit")
+	return strings.Trim(name, "._- ")
+}
+
+func containsCodexRateLimitInfo(object map[string]json.RawMessage) bool {
+	if object == nil {
+		return false
+	}
+	if isCodexUsageWindowObject(object) {
+		return true
+	}
+	if objectField(object, "primary_window", "primaryWindow", "primary", "secondary_window", "secondaryWindow", "secondary") != nil {
+		return true
+	}
+	nested := objectField(object, "rate_limit", "rateLimit")
+	return containsCodexRateLimitInfo(nested)
+}
+
 func parseCodexRateLimitInfo(object map[string]json.RawMessage) *CodexRateLimitInfo {
 	if object == nil {
 		return nil
 	}
+	if isCodexUsageWindowObject(object) {
+		return &CodexRateLimitInfo{
+			Allowed:       boolPtrField(object, "allowed"),
+			LimitReached:  boolPtrField(object, "limit_reached", "limitReached"),
+			PrimaryWindow: parseCodexUsageWindow(object),
+		}
+	}
 	return &CodexRateLimitInfo{
 		Allowed:         boolPtrField(object, "allowed"),
 		LimitReached:    boolPtrField(object, "limit_reached", "limitReached"),
-		PrimaryWindow:   parseCodexUsageWindow(objectField(object, "primary_window", "primaryWindow")),
-		SecondaryWindow: parseCodexUsageWindow(objectField(object, "secondary_window", "secondaryWindow")),
+		PrimaryWindow:   parseCodexUsageWindow(objectField(object, "primary_window", "primaryWindow", "primary")),
+		SecondaryWindow: parseCodexUsageWindow(objectField(object, "secondary_window", "secondaryWindow", "secondary")),
 	}
 }
 
@@ -125,6 +194,17 @@ func parseCodexUsageWindow(object map[string]json.RawMessage) *CodexUsageWindow 
 		ResetAfterSeconds:  intField(object, "reset_after_seconds", "resetAfterSeconds"),
 		ResetAt:            intField(object, "reset_at", "resetAt"),
 	}
+}
+
+func isCodexUsageWindowObject(object map[string]json.RawMessage) bool {
+	if object == nil {
+		return false
+	}
+	_, hasUsedPercent := floatValue(object, "used_percent", "usedPercent")
+	_, hasWindowSeconds := floatValue(object, "limit_window_seconds", "limitWindowSeconds")
+	_, hasResetAfter := floatValue(object, "reset_after_seconds", "resetAfterSeconds")
+	_, hasResetAt := floatValue(object, "reset_at", "resetAt")
+	return hasUsedPercent || hasWindowSeconds || hasResetAfter || hasResetAt
 }
 
 func parseGeminiCliQuotaPayload(response *apicall.Response) (*GeminiCliQuotaPayload, error) {

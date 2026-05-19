@@ -135,6 +135,35 @@ func TestCodexProviderParsesImage2AdditionalRateLimitMap(t *testing.T) {
 	assertIntField(t, secondary.Window.Seconds, 604800, "image2 secondary window seconds")
 }
 
+func TestCodexProviderParsesTopLevelImage2RateLimit(t *testing.T) {
+	codexUsageJSON := `{
+		"plan_type":"plus",
+		"image2_rate_limit":{
+			"allowed":true,
+			"primary":{"used_percent":33,"limit_window_seconds":18000,"reset_after_seconds":1200}
+		}
+	}`
+	caller := &recordingManagementCaller{responses: []*apicall.Response{{
+		StatusCode: 200,
+		BodyText:   codexUsageJSON,
+		Body:       json.RawMessage(codexUsageJSON),
+	}}}
+	provider := quota.NewCodexProvider(caller, quota.DefaultProviderConfigs().Codex)
+
+	output, err := provider.Check(context.Background(), quota.ProviderInput{Identity: entities.UsageIdentity{Identity: "codex-auth"}})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	rows := quota.NormalizeQuotaRows(output)
+	if len(rows) != 1 {
+		t.Fatalf("expected top-level image2 quota row, got %#v", rows)
+	}
+	row := findQuotaRow(t, rows, "additional_rate_limits.image2.primary_window")
+	assertQuotaText(t, row, "image2 5h", "additional", "image2")
+	assertFloatField(t, row.UsedPercent, 33, "top-level image2 usedPercent")
+	assertIntField(t, row.Window.Seconds, 18000, "top-level image2 window seconds")
+}
+
 func TestCodexProviderRejectsNonSuccessUsageResponse(t *testing.T) {
 	caller := &recordingManagementCaller{responses: []*apicall.Response{{
 		StatusCode: 429,
